@@ -1,0 +1,6 @@
+{
+  "name": "Tarazu",
+  "description": "Smart Weight, Rate, Unit Conversion, and Calculator system for grocers, wholesalers, and retail businesses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
