@@ -119,10 +119,18 @@ export default function App() {
           {/* Logo brand */}
           <div className="h-10 w-10 bg-emerald-600 rounded-xl shadow-lg shadow-emerald-600/15 flex items-center justify-center text-white scale-95 leading-none">
             <Scale className="w-5.5 h-5.5 animate-none" />
+            <img 
+               //  src="https://picsum.photos/seed/amar/800/800" //Tarazu
+               // src="https://github.com/amarsahu9272/amar.ar/blob/main/amrProfile.png?raw=true"
+               src="https://github.com/amarsahu9272/amar.ar/blob/main/Tarazu%20Icon%20web.png?raw=true" 
+                alt="Amar Sahu" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+             />
           </div>
           <div>
             <h2 className="text-base sm:text-lg font-black tracking-tight flex items-center gap-1.5 leading-tight">
-              Tarazu
+              
               <span className="bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-400 border border-emerald-100 text-[10px] tracking-wide font-extrabold uppercase px-1.5 py-0.5 rounded">
                 Smart Scale
               </span>
