@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, Save, Smartphone, Map, Volume2, Star, RefreshCcw, Landmark, Sparkles, CheckCircle } from 'lucide-react';
+import { Settings, Save, Smartphone, Map, Volume2, Star, RefreshCcw, Landmark, Sparkles, CheckCircle, Download } from 'lucide-react';
 import { Language, AppSettings } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
@@ -71,6 +71,35 @@ export default function SettingsModule({
       ...settings,
       language: newLang,
     });
+  };
+
+  const handleDownloadBackup = () => {
+    playClickSound(soundEnabled);
+    try {
+      const backupData = {
+        tarazu_settings: localStorage.getItem('tarazu_settings') ? JSON.parse(localStorage.getItem('tarazu_settings')!) : null,
+        tarazu_history: localStorage.getItem('tarazu_history') ? JSON.parse(localStorage.getItem('tarazu_history')!) : null,
+        tarazu_preset_rates: localStorage.getItem('tarazu_preset_rates') ? JSON.parse(localStorage.getItem('tarazu_preset_rates')!) : null,
+        tarazu_preset_categories: localStorage.getItem('tarazu_preset_categories') ? JSON.parse(localStorage.getItem('tarazu_preset_categories')!) : null,
+        exportedAt: new Date().toISOString(),
+        appId: 'tarazu-smart-scale'
+      };
+
+      const jsonStr = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().split('T')[0];
+      link.href = url;
+      link.download = `tarazu_backup_${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to export backup', e);
+      alert(lang === 'hi' ? 'बैकअप डाउनलोड करने में विफल!' : 'Failed to download backup!');
+    }
   };
 
   return (
@@ -224,6 +253,54 @@ export default function SettingsModule({
             <option value="3">3 Places (.000)</option>
             <option value="4">4 Places (.0000)</option>
           </select>
+        </div>
+
+        {/* Full App Backup */}
+        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+              {lang === 'hi' ? 'पूर्ण ऐप बैकअप' : 'Full App Backup'}
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {lang === 'hi' 
+                ? 'अपनी सभी सेटिंग्स, बहीखाता (इतिहास), भाव और श्रेणियों को एक ही JSON फ़ाइल के रूप में डाउनलोड करें।' 
+                : 'Download all your settings, ledger history, custom rate presets, and categories as a single JSON file.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            id="btn-app-backup"
+            onClick={handleDownloadBackup}
+            className="py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 border border-emerald-250 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap self-end sm:self-auto flex items-center gap-1.5 justify-center"
+          >
+            <Download className="w-4 h-4" />
+            {lang === 'hi' ? 'बैकअप डाउनलोड करें' : 'Download Backup'}
+          </button>
+        </div>
+
+        {/* App Download Link */}
+        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+              {lang === 'hi' ? 'मोबाइल ऐप डाउनलोड' : 'Mobile App Download'}
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {lang === 'hi' 
+                ? 'बेहतर उपयोग और आसान पहुंच के लिए टारज़ू एंड्रॉइड (Android) एप डाउनलोड करें।' 
+                : 'Download the Tarazu Android app for easy, dedicated access on your mobile device.'}
+            </p>
+          </div>
+          <a
+            href="https://drive.google.com/file/d/17mXLaAYtEn3-H5Aco3vbTiW1p_kHSK8m/view"
+            target="_blank"
+            rel="noopener noreferrer"
+            id="btn-download-app"
+            onClick={() => playClickSound(soundEnabled)}
+            className="py-2.5 px-4 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 border border-amber-250 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap self-end sm:self-auto flex items-center gap-1.5 justify-center"
+          >
+            <Smartphone className="w-4 h-4" />
+            {lang === 'hi' ? 'ऐप डाउनलोड करें' : 'Download App'}
+          </a>
         </div>
 
         {/* Severe full Reset action */}

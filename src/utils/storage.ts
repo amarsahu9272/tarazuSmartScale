@@ -71,12 +71,46 @@ export function saveStoredHistory(history: HistoryItem[]) {
   }
 }
 
+export interface PresetCategory {
+  id: string;
+  en: string;
+  hi: string;
+}
+
 export interface PresetRate {
   id: string;
   name: string;
   nameHi: string;
   rate: number;
   category?: string;
+}
+
+const DEFAULT_CATEGORIES: PresetCategory[] = [
+  { id: 'Vegetables', en: 'Vegetables', hi: 'सब्जियाँ' },
+  { id: 'Grains', en: 'Grains', hi: 'अनाज' },
+  { id: 'Dairy', en: 'Dairy', hi: 'डेयरी' },
+  { id: 'Fruits', en: 'Fruits', hi: 'फल' },
+  { id: 'Spices', en: 'Spices', hi: 'मसाले' },
+  { id: 'Others', en: 'Others', hi: 'अन्य' }
+];
+
+export function getStoredCategories(): PresetCategory[] {
+  if (typeof window === 'undefined') return DEFAULT_CATEGORIES;
+  try {
+    const val = localStorage.getItem('tarazu_preset_categories');
+    if (val) return JSON.parse(val);
+  } catch (e) {
+    console.error('Failed to parse categories', e);
+  }
+  return DEFAULT_CATEGORIES;
+}
+
+export function saveStoredCategories(categories: PresetCategory[]) {
+  try {
+    localStorage.setItem('tarazu_preset_categories', JSON.stringify(categories));
+  } catch (e) {
+    console.error('Failed to save categories', e);
+  }
 }
 
 export function getStoredPresets(): PresetRate[] {

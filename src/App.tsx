@@ -74,6 +74,20 @@ export default function App() {
     setHistory([]);
   };
 
+  const handleImportHistory = (importedItems: HistoryItem[], isMerge: boolean) => {
+    if (isMerge) {
+      setHistory((prev) => {
+        const existingIds = new Set(prev.map(item => item.id));
+        const filteredNew = importedItems.filter(item => !existingIds.has(item.id));
+        const combined = [...filteredNew, ...prev];
+        return combined.sort((a, b) => b.timestamp - a.timestamp);
+      });
+    } else {
+      setHistory(importedItems.sort((a, b) => b.timestamp - a.timestamp));
+    }
+    playSuccessSound(settings.soundEnabled);
+  };
+
   const handleUpdateSettings = (updated: AppSettings) => {
     setSettings(updated);
   };
@@ -259,6 +273,7 @@ export default function App() {
               history={history}
               onDeleteItem={handleDeleteHistoryItem}
               onClearAll={handleClearHistory}
+              onImportHistory={handleImportHistory}
             />
           )}
 

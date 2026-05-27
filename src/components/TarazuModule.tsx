@@ -1,20 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Share2, Copy, CheckCircle, Scale, Plus, Trash2, Volume2, Sparkles } from 'lucide-react';
+import { Mic, MicOff, Share2, Copy, CheckCircle, Scale, Plus, Trash2, Volume2, Sparkles, Settings, Tag, Edit, ChevronUp, ChevronDown } from 'lucide-react';
 import { Language, HistoryItem, AppSettings, HistoryItemInput } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
 import { isSpeechSupported, startSpeechListening } from '../utils/speech';
-import { getStoredPresets, saveStoredPresets, PresetRate } from '../utils/storage';
+import { getStoredPresets, saveStoredPresets, PresetRate, getStoredCategories, saveStoredCategories, PresetCategory, getStoredHistory } from '../utils/storage';
 import NumericKeypad from './NumericKeypad';
-
-const PRESET_CATEGORIES = [
-  { id: 'Vegetables', en: 'Vegetables', hi: 'सब्जियाँ' },
-  { id: 'Grains', en: 'Grains', hi: 'अनाज' },
-  { id: 'Dairy', en: 'Dairy', hi: 'डेयरी' },
-  { id: 'Fruits', en: 'Fruits', hi: 'फल' },
-  { id: 'Spices', en: 'Spices', hi: 'मसाले' },
-  { id: 'Others', en: 'Others', hi: 'अन्य' }
-];
 
 interface TarazuModuleProps {
   lang: Language;
@@ -46,13 +37,23 @@ export default function TarazuModule({
   // 'rate' | 'amount' | 'kg' | 'g'
   const [activeInput, setActiveInput] = useState<'rate' | 'amount' | 'kg' | 'g'>('amount');
 
-  // Load preset rates
+  // Load preset rates and categories
   const [presets, setPresets] = useState<PresetRate[]>([]);
+  const [categories, setCategories] = useState<PresetCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [newPresetName, setNewPresetName] = useState('');
   const [newPresetRate, setNewPresetRate] = useState('');
   const [newPresetCategory, setNewPresetCategory] = useState<string>('Vegetables');
   const [showAddPresetForm, setShowAddPresetForm] = useState(false);
+
+  // Customizable categories state managers
+  const [showManageCategories, setShowManageCategories] = useState(false);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [newCatEn, setNewCatEn] = useState('');
+  const [newCatHi, setNewCatHi] = useState('');
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editCatEn, setEditCatEn] = useState('');
+  const [editCatHi, setEditCatHi] = useState('');
 
   // Voice Listening State
   const [isListening, setIsListening] = useState(false);
@@ -62,16 +63,151 @@ export default function TarazuModule({
   const [copied, setCopied] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  // Load presets on mount
+  // List of history items to compute preset usage frequency
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+
+  // Load presets and categories on mount
   useEffect(() => {
     setPresets(getStoredPresets());
+    const savedCats = getStoredCategories();
+    setCategories(savedCats);
+    if (savedCats.length > 0) {
+      setNewPresetCategory(savedCats[0].id);
+    }
+    setHistoryItems(getStoredHistory());
   }, []);
 
+  // Category management functions
+  const handleAddCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatEn.trim()) return;
+    const cleanId = 'cat_' + Date.now().toString();
+    const newCat: PresetCategory = {
+      id: cleanId,
+      en: newCatEn.trim(),
+      hi: (newCatHi || newCatEn).trim(),
+    };
+    
+    const updated = [...categories, newCat];
+    setCategories(updated);
+    saveStoredCategories(updated);
+    setNewCatEn('');
+    setNewCatHi('');
+    playSuccessSound(settings.soundEnabled);
+  };
+
+  const startEditingCategory = (cat: PresetCategory) => {
+    setEditingCategoryId(cat.id);
+    setEditCatEn(cat.en);
+    setEditCatHi(cat.hi);
+    playClickSound(settings.soundEnabled);
+  };
+
+  const handleSaveCategory = (id: string, e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editCatEn.trim()) return;
+    
+    const updated = categories.map((cat) => {
+      if (cat.id === id) {
+        return {
+          ...cat,
+          en: editCatEn.trim(),
+          hi: (editCatHi || editCatEn).trim(),
+        };
+      }
+      return cat;
+    });
+
+    setCategories(updated);
+    saveStoredCategories(updated);
+    setEditingCategoryId(null);
+    playSuccessSound(settings.soundEnabled);
+  };
+
+  const handleDeleteCategory = (id: string) => {
+    playClickSound(settings.soundEnabled);
+    if (window.confirm(lang === 'hi' ? 'क्या आप इस श्रेणी को हटाना चाहते हैं? इस श्रेणी के सामान "Others" में चले जाएंगे।' : 'Are you sure you want to delete this category? Presets will move to "Others".')) {
+      const updatedCats = categories.filter((cat) => cat.id !== id);
+      setCategories(updatedCats);
+      saveStoredCategories(updatedCats);
+      
+      // Update existing presets to move to 'Others' or another available category
+      const fallbackCat = updatedCats.length > 0 ? updatedCats[0].id : 'Others';
+      const updatedPresets = presets.map((p) => {
+        if (p.category === id) {
+          return { ...p, category: fallbackCat };
+        }
+        return p;
+      });
+      setPresets(updatedPresets);
+      saveStoredPresets(updatedPresets);
+      
+      // If deleted category was selected, switch selection
+      if (selectedCategory === id) {
+        setSelectedCategory('All');
+      }
+      playSuccessSound(settings.soundEnabled);
+    }
+  };
+
+  const handleMoveCategory = (index: number, direction: 'up' | 'down') => {
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= categories.length) return;
+    
+    playClickSound(settings.soundEnabled);
+    const updated = [...categories];
+    const [moved] = updated.splice(index, 1);
+    updated.splice(newIndex, 0, moved);
+    
+    setCategories(updated);
+    saveStoredCategories(updated);
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', index.toString());
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === targetIndex) return;
+
+    const updated = [...categories];
+    const [moved] = updated.splice(draggedIndex, 1);
+    updated.splice(targetIndex, 0, moved);
+
+    setCategories(updated);
+    saveStoredCategories(updated);
+    setDraggedIndex(null);
+    playClickSound(settings.soundEnabled);
+  };
+
+  // Count frequency of rate usages in historic items of type 'tarazu'
+  const presetUsageCounts = React.useMemo(() => {
+    const counts: Record<number, number> = {};
+    historyItems.forEach((item) => {
+      if (item.type === 'tarazu' && item.rate) {
+        counts[item.rate] = (counts[item.rate] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [historyItems]);
+
   // Filter presets based on selected category filter
-  const filteredPresets = presets.filter((pr) => {
-    if (selectedCategory === 'All') return true;
-    return (pr.category || 'Others') === selectedCategory;
-  });
+  const filteredPresets = React.useMemo(() => {
+    if (selectedCategory === '__frequent__') {
+      return presets
+        .filter((pr) => (presetUsageCounts[pr.rate] || 0) > 0)
+        .sort((a, b) => (presetUsageCounts[b.rate] || 0) - (presetUsageCounts[a.rate] || 0));
+    }
+    if (selectedCategory === 'All') return presets;
+    return presets.filter((pr) => (pr.category || 'Others') === selectedCategory);
+  }, [presets, selectedCategory, presetUsageCounts]);
 
   // Sync inputs based on active field and trigger automatic calculation
   const calculatedOutput = (() => {
@@ -168,7 +304,7 @@ export default function TarazuModule({
       const amt = parseFloat(amount) || 0;
       const out = calculatedOutput as { kg: number, g: number, totalKg: number };
       if (r > 0 && amt > 0) {
-        onAddHistoryItem({
+        const itemData: HistoryItemInput = {
           type: 'tarazu',
           mode: 'amount_to_weight',
           rate: r,
@@ -176,14 +312,23 @@ export default function TarazuModule({
           resultKg: out.kg,
           resultG: out.g,
           label: `${lang === 'hi' ? 'खरीद' : 'Buy'} ₹${amt} @ ₹${r}/KG → Weight: ${out.kg} KG ${out.g} G`,
-        });
+        };
+        onAddHistoryItem(itemData);
+        setHistoryItems((prev) => [
+          {
+            ...itemData,
+            id: Date.now().toString(),
+            timestamp: Date.now(),
+          } as HistoryItem,
+          ...prev,
+        ]);
       }
     } else {
       const kgVal = parseFloat(weightKg) || 0;
       const gVal = parseFloat(weightG) || 0;
       const out = calculatedOutput as { totalPrice: number };
       if (r > 0 && (kgVal > 0 || gVal > 0)) {
-        onAddHistoryItem({
+        const itemData: HistoryItemInput = {
           type: 'tarazu',
           mode: 'weight_to_amount',
           rate: r,
@@ -191,7 +336,16 @@ export default function TarazuModule({
           inputG: gVal,
           resultAmount: Number(out.totalPrice.toFixed(settings.decimalPrecision)),
           label: `${lang === 'hi' ? 'वजन' : 'Weigh'} ${kgVal} KG ${gVal} G @ ₹${r}/KG → Price: ₹${out.totalPrice.toFixed(settings.decimalPrecision)}`,
-        });
+        };
+        onAddHistoryItem(itemData);
+        setHistoryItems((prev) => [
+          {
+            ...itemData,
+            id: Date.now().toString(),
+            timestamp: Date.now(),
+          } as HistoryItem,
+          ...prev,
+        ]);
       }
     }
   };
@@ -410,71 +564,131 @@ export default function TarazuModule({
               
               {/* Box 1: Price rate */}
               <div
-                onClick={() => handleFocus('rate')}
-                className={`cursor-pointer p-1 rounded-md border text-center transition-all ${
+                onClick={() => {
+                  handleFocus('rate');
+                  const inputEl = document.getElementById('input-rate') as HTMLInputElement | null;
+                  if (inputEl) inputEl.focus();
+                }}
+                className={`cursor-pointer p-1.5 rounded-lg border text-center transition-all duration-300 ${
                   activeInput === 'rate'
-                    ? 'bg-emerald-950/60 border-emerald-500 text-emerald-250 font-bold ring-1 ring-emerald-500/20'
-                    : 'bg-slate-900/40 border-transparent text-emerald-600/80 hover:bg-slate-900/60'
+                    ? 'bg-emerald-950/90 border-emerald-400 text-emerald-100 font-bold ring-2 ring-emerald-400/35 shadow-[0_0_15px_rgba(52,211,153,0.35)]'
+                    : 'bg-slate-900/40 border-transparent text-emerald-600/85 hover:bg-slate-900/80 hover:border-emerald-900/40'
                 }`}
               >
-                <div className="text-[8px] uppercase tracking-wider text-emerald-700/80 font-bold">
+                <label htmlFor="input-rate" className="block text-[8px] uppercase tracking-wider text-emerald-700 font-bold cursor-pointer">
                   {lang === 'hi' ? 'दर ₹/KG' : 'RATE ₹/KG'}
-                </div>
-                <div className="font-mono mt-0.5 truncate text-xs">
-                  ₹{rate || '0'}{activeInput === 'rate' ? <span className="animate-pulse">|</span> : ''}
+                </label>
+                <div className="mt-0.5 flex items-center justify-center font-mono text-xs">
+                  <span className="mr-0.5 text-[10px] text-emerald-500 font-bold">₹</span>
+                  <input
+                    id="input-rate"
+                    type="text"
+                    inputMode="decimal"
+                    pattern="[0-9.]*"
+                    value={rate}
+                    onChange={(e) => handleInputChange('rate', e.target.value)}
+                    onFocus={() => handleFocus('rate')}
+                    className="w-14 bg-transparent text-center border-none outline-none focus:outline-none focus:ring-0 font-mono text-xs text-emerald-200 font-bold focus:text-white"
+                  />
+                  {activeInput === 'rate' && <span className="animate-pulse text-emerald-400 font-bold">|</span>}
                 </div>
               </div>
 
               {/* Box 2 & 3: Weight or Amount editors depending on Mode */}
               {mode === 'amount_to_weight' ? (
                 <div
-                  onClick={() => handleFocus('amount')}
-                  className={`cursor-pointer p-1 rounded-md border text-center transition-all col-span-2 ${
+                  onClick={() => {
+                    handleFocus('amount');
+                    const inputEl = document.getElementById('input-amount') as HTMLInputElement | null;
+                    if (inputEl) inputEl.focus();
+                  }}
+                  className={`cursor-pointer p-1.5 rounded-lg border text-center transition-all duration-300 col-span-2 ${
                     activeInput === 'amount'
-                      ? 'bg-emerald-950/60 border-emerald-500 text-emerald-250 font-bold ring-1 ring-emerald-500/20'
-                      : 'bg-slate-900/40 border-transparent text-emerald-600/80 hover:bg-slate-900/60'
+                      ? 'bg-emerald-950/90 border-emerald-400 text-emerald-100 font-bold ring-2 ring-emerald-400/35 shadow-[0_0_15px_rgba(52,211,153,0.35)]'
+                      : 'bg-slate-900/40 border-transparent text-emerald-600/85 hover:bg-slate-900/80 hover:border-emerald-900/40'
                   }`}
                 >
-                  <div className="text-[8px] uppercase tracking-wider text-emerald-700/80 font-bold">
+                  <label htmlFor="input-amount" className="block text-[8px] uppercase tracking-wider text-emerald-700 font-bold cursor-pointer">
                     {lang === 'hi' ? 'खरीद मूल्य बजट' : 'BUDGET AMOUNT'}
-                  </div>
-                  <div className="font-mono mt-0.5 truncate text-xs text-center">
-                    ₹{amount || '0'}{activeInput === 'amount' ? <span className="animate-pulse">|</span> : ''}
+                  </label>
+                  <div className="mt-0.5 flex items-center justify-center font-mono text-xs">
+                    <span className="mr-0.5 text-[10px] text-emerald-500 font-bold">₹</span>
+                    <input
+                      id="input-amount"
+                      type="text"
+                      inputMode="decimal"
+                      pattern="[0-9.]*"
+                      value={amount}
+                      onChange={(e) => handleInputChange('amount', e.target.value)}
+                      onFocus={() => handleFocus('amount')}
+                      className="w-24 bg-transparent text-center border-none outline-none focus:outline-none focus:ring-0 font-mono text-xs text-emerald-250 font-bold focus:text-white"
+                    />
+                    {activeInput === 'amount' && <span className="animate-pulse text-emerald-400 font-bold">|</span>}
                   </div>
                 </div>
               ) : (
                 <>
                   {/* Kilogram Editor */}
                   <div
-                    onClick={() => handleFocus('kg')}
-                    className={`cursor-pointer p-1 rounded-md border text-center transition-all ${
+                    onClick={() => {
+                      handleFocus('kg');
+                      const inputEl = document.getElementById('input-kg') as HTMLInputElement | null;
+                      if (inputEl) inputEl.focus();
+                    }}
+                    className={`cursor-pointer p-1.5 rounded-lg border text-center transition-all duration-300 ${
                       activeInput === 'kg'
-                        ? 'bg-emerald-950/60 border-emerald-500 text-emerald-250 font-bold ring-1 ring-emerald-500/20'
-                        : 'bg-slate-900/40 border-transparent text-emerald-600/80 hover:bg-slate-900/60'
+                        ? 'bg-emerald-950/90 border-emerald-400 text-emerald-100 font-bold ring-2 ring-emerald-400/35 shadow-[0_0_15px_rgba(52,211,153,0.35)]'
+                        : 'bg-slate-900/40 border-transparent text-emerald-600/85 hover:bg-slate-900/80 hover:border-emerald-900/40'
                     }`}
                   >
-                    <div className="text-[8px] uppercase tracking-wider text-emerald-700/80 font-bold">
+                    <label htmlFor="input-kg" className="block text-[8px] uppercase tracking-wider text-emerald-700 font-bold cursor-pointer">
                       {lang === 'hi' ? 'किलोग्राम (KG)' : 'WEIGHT KG'}
-                    </div>
-                    <div className="font-mono mt-0.5 truncate text-xs">
-                      {weightKg || '0'}{activeInput === 'kg' ? <span className="animate-pulse">|</span> : ''} kg
+                    </label>
+                    <div className="mt-0.5 flex items-center justify-center font-mono text-xs">
+                      <input
+                        id="input-kg"
+                        type="text"
+                        inputMode="decimal"
+                        pattern="[0-9.]*"
+                        value={weightKg}
+                        onChange={(e) => handleInputChange('kg', e.target.value)}
+                        onFocus={() => handleFocus('kg')}
+                        className="w-12 bg-transparent text-center border-none outline-none focus:outline-none focus:ring-0 font-mono text-xs text-emerald-250 font-bold focus:text-white"
+                      />
+                      <span className="ml-0.5 text-[10px] text-emerald-500 font-medium">kg</span>
+                      {activeInput === 'kg' && <span className="animate-pulse text-emerald-400 font-bold">|</span>}
                     </div>
                   </div>
 
                   {/* Gram Editor */}
                   <div
-                    onClick={() => handleFocus('g')}
-                    className={`cursor-pointer p-1 rounded-md border text-center transition-all ${
+                    onClick={() => {
+                      handleFocus('g');
+                      const inputEl = document.getElementById('input-g') as HTMLInputElement | null;
+                      if (inputEl) inputEl.focus();
+                    }}
+                    className={`cursor-pointer p-1.5 rounded-lg border text-center transition-all duration-300 ${
                       activeInput === 'g'
-                        ? 'bg-emerald-950/60 border-emerald-500 text-emerald-250 font-bold ring-1 ring-emerald-500/20'
-                        : 'bg-slate-900/40 border-transparent text-emerald-600/80 hover:bg-slate-900/60'
+                        ? 'bg-emerald-950/90 border-emerald-400 text-emerald-100 font-bold ring-2 ring-emerald-400/35 shadow-[0_0_15px_rgba(52,211,153,0.35)]'
+                        : 'bg-slate-900/40 border-transparent text-emerald-600/85 hover:bg-slate-900/80 hover:border-emerald-900/40'
                     }`}
                   >
-                    <div className="text-[8px] uppercase tracking-wider text-emerald-700/80 font-bold">
+                    <label htmlFor="input-g" className="block text-[8px] uppercase tracking-wider text-emerald-700 font-bold cursor-pointer">
                       {lang === 'hi' ? 'ग्राम (GM)' : 'WEIGHT GM'}
-                    </div>
-                    <div className="font-mono mt-0.5 truncate text-xs">
-                      {weightG || '0'}{activeInput === 'g' ? <span className="animate-pulse">|</span> : ''} g
+                    </label>
+                    <div className="mt-0.5 flex items-center justify-center font-mono text-xs">
+                      <input
+                        id="input-g"
+                        type="text"
+                        inputMode="decimal"
+                        pattern="[0-9.]*"
+                        value={weightG}
+                        onChange={(e) => handleInputChange('g', e.target.value)}
+                        onFocus={() => handleFocus('g')}
+                        className="w-12 bg-transparent text-center border-none outline-none focus:outline-none focus:ring-0 font-mono text-xs text-emerald-250 font-bold focus:text-white"
+                      />
+                      <span className="ml-0.5 text-[10px] text-emerald-500 font-medium">g</span>
+                      {activeInput === 'g' && <span className="animate-pulse text-emerald-400 font-bold">|</span>}
                     </div>
                   </div>
                 </>
@@ -487,6 +701,7 @@ export default function TarazuModule({
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-none max-w-full text-[10px] sm:text-[11px]">
             <button
               type="button"
+              id="category-pill-all"
               onClick={() => {
                 playClickSound(settings.soundEnabled);
                 setSelectedCategory('All');
@@ -499,7 +714,26 @@ export default function TarazuModule({
             >
               {lang === 'hi' ? `सभी (${presets.length})` : `All (${presets.length})`}
             </button>
-            {PRESET_CATEGORIES.map((cat) => {
+            <button
+              type="button"
+              id="category-pill-frequent"
+              onClick={() => {
+                playClickSound(settings.soundEnabled);
+                setSelectedCategory('__frequent__');
+              }}
+              className={`px-2.5 py-1 rounded-lg font-bold border transition-all cursor-pointer flex-shrink-0 flex items-center gap-1 ${
+                selectedCategory === '__frequent__'
+                  ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-800 text-slate-650 dark:text-slate-300 border-slate-205 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750'
+              }`}
+            >
+              <Sparkles className="w-3 h-3 text-amber-550 dark:text-amber-400 shrink-0" />
+              <span>
+                {lang === 'hi' ? 'अक्सर इस्तेमाल' : 'Frequently Used'}{' '}
+                ({presets.filter((pr) => (presetUsageCounts[pr.rate] || 0) > 0).length})
+              </span>
+            </button>
+            {categories.map((cat) => {
               const count = presets.filter(p => (p.category || 'Others') === cat.id).length;
               return (
                 <button
@@ -519,6 +753,26 @@ export default function TarazuModule({
                 </button>
               );
             })}
+            
+            {/* Manage Categories Action Button */}
+            <button
+              type="button"
+              id="btn-toggle-manage-categories"
+              onClick={() => {
+                playClickSound(settings.soundEnabled);
+                setShowManageCategories(!showManageCategories);
+                setShowAddPresetForm(false);
+              }}
+              className={`px-2 py-1 rounded-lg font-bold border transition-all cursor-pointer flex-shrink-0 flex items-center gap-1 text-[10px] ${
+                showManageCategories
+                  ? 'bg-amber-600 border-amber-600 text-white shadow-sm font-extrabold'
+                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-600 dark:text-slate-400 border-slate-200/50 dark:border-slate-800'
+              }`}
+              title={lang === 'hi' ? 'श्रेणियां संपादित करें' : 'Manage Categories'}
+            >
+              <Settings className="w-3 h-3" />
+              <span>{lang === 'hi' ? 'प्रबंधित' : 'Manage'}</span>
+            </button>
           </div>
 
           {/* Preset Buttons & Voice inline Row */}
@@ -568,6 +822,13 @@ export default function TarazuModule({
                     </span>
                   </button>
                 ))}
+
+                {selectedCategory === '__frequent__' && filteredPresets.length === 0 && (
+                  <span className="flex items-center text-slate-400 dark:text-slate-500 text-[10px] font-black py-1 px-2 italic whitespace-nowrap gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-500 shrink-0" />
+                    <span>{lang === 'hi' ? 'कोई गणना इतिहास नहीं' : 'No calculation history yet'}</span>
+                  </span>
+                )}
               </div>
             </div>
 
@@ -589,6 +850,186 @@ export default function TarazuModule({
               <span className="hidden sm:inline">{isListening ? '...' : t('voiceInput')}</span>
             </button>
           </div>
+
+          {/* Category Management Dashboard */}
+          {showManageCategories && (
+            <div id="category-manager-panel" className="bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-amber-200/50 dark:border-amber-900/30 space-y-3.5">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-1.5">
+                <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                  <Tag className="w-4 h-4" />
+                  <h3 className="font-extrabold text-xs uppercase tracking-wider">{lang === 'hi' ? 'श्रेणी बहीखाता प्रबंधन' : 'Category Management'}</h3>
+                </div>
+                <button
+                  type="button"
+                  id="btn-close-category-manager"
+                  className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 text-xs font-bold cursor-pointer transition-all"
+                  onClick={() => {
+                    playClickSound(settings.soundEnabled);
+                    setShowManageCategories(false);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Add New Category form */}
+              <form onSubmit={handleAddCategory} className="space-y-1.5 bg-white dark:bg-slate-950 p-2.5 rounded-lg border border-slate-150 dark:border-slate-800">
+                <p className="text-[9px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider">
+                  {lang === 'hi' ? 'नई श्रेणी जोड़ें' : 'Create New Category'}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <input
+                      type="text"
+                      className="w-full text-xs px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-slate-800 dark:text-white outline-none focus:ring-1 focus:ring-amber-500 font-bold"
+                      placeholder={lang === 'hi' ? 'नाम (English)' : 'Name (English) e.g. Snacks'}
+                      value={newCatEn}
+                      onChange={(e) => setNewCatEn(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      className="w-full text-xs px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded text-slate-800 dark:text-white outline-none focus:ring-1 focus:ring-amber-500 font-bold"
+                      placeholder={lang === 'hi' ? 'नाम (हिंदी) (वैकल्पिक)' : 'Name (Hindi) (Optional)'}
+                      value={newCatHi}
+                      onChange={(e) => setNewCatHi(e.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      id="btn-add-category"
+                      className="px-3 bg-amber-600 text-white rounded text-xs font-black transition-all flex items-center justify-center cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Category Editable List */}
+              <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1">
+                <p className="text-[9px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider">
+                  {lang === 'hi' ? 'मौजूदा श्रेणियां (क्रम बदलें / नाम बदलें / हटाएं)' : 'Existing Categories (Reorder / Rename / Delete)'}
+                </p>
+                
+                <div className="space-y-1.5">
+                  {categories.map((cat, index) => (
+                    <div
+                      key={cat.id}
+                      draggable={editingCategoryId !== cat.id}
+                      onDragStart={(e) => handleDragStart(e, index)}
+                      onDragOver={handleDragOver}
+                      onDrop={(e) => handleDrop(e, index)}
+                      className={`flex items-center justify-between p-1.5 bg-white dark:bg-slate-950 rounded border gap-2 transition-all duration-150 ${
+                        draggedIndex === index
+                          ? 'opacity-40 border-dashed border-amber-400 bg-amber-50/20 dark:bg-amber-950/10'
+                          : 'border-slate-150 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-700'
+                      } ${editingCategoryId !== cat.id ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                    >
+                      {editingCategoryId === cat.id ? (
+                        <form
+                          onSubmit={(e) => handleSaveCategory(cat.id, e)}
+                          className="flex-1 flex gap-1.5 items-center w-full"
+                        >
+                          <input
+                            type="text"
+                            className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] px-2 py-0.5 rounded w-1/2 outline-none font-bold text-slate-800 dark:text-white"
+                            value={editCatEn}
+                            onChange={(e) => setEditCatEn(e.target.value)}
+                            required
+                          />
+                          <input
+                            type="text"
+                            className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] px-2 py-0.5 rounded w-1/2 outline-none font-bold text-slate-850 dark:text-white"
+                            value={editCatHi}
+                            onChange={(e) => setEditCatHi(e.target.value)}
+                          />
+                          <button
+                            type="submit"
+                            id={`btn-save-cat-${cat.id}`}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 rounded text-[10px] font-black cursor-pointer"
+                          >
+                            {lang === 'hi' ? 'बचाएं' : 'Save'}
+                          </button>
+                        </form>
+                      ) : (
+                        <>
+                          <div className="flex-1 flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-300 text-xs">
+                            <Tag className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{lang === 'hi' ? cat.hi : cat.en}</span>
+                            {cat.hi !== cat.en && (
+                              <span className="text-[10px] text-slate-400 font-normal">({lang === 'hi' ? cat.en : cat.hi})</span>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center gap-1">
+                            {/* Move Up */}
+                            <button
+                              type="button"
+                              id={`btn-moveup-cat-${cat.id}`}
+                              disabled={index === 0}
+                              onClick={() => handleMoveCategory(index, 'up')}
+                              className={`p-1 rounded transition-all cursor-pointer ${
+                                index === 0
+                                  ? 'text-slate-200 dark:text-slate-800 cursor-not-allowed opacity-30'
+                                  : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-850 hover:text-amber-600 dark:hover:text-amber-400'
+                              }`}
+                              title={lang === 'hi' ? 'ऊपर ले जाएं' : 'Move Up'}
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Move Down */}
+                            <button
+                              type="button"
+                              id={`btn-movedown-cat-${cat.id}`}
+                              disabled={index === categories.length - 1}
+                              onClick={() => handleMoveCategory(index, 'down')}
+                              className={`p-1 rounded transition-all cursor-pointer ${
+                                index === categories.length - 1
+                                  ? 'text-slate-200 dark:text-slate-800 cursor-not-allowed opacity-30'
+                                  : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-850 hover:text-amber-600 dark:hover:text-amber-400'
+                              }`}
+                              title={lang === 'hi' ? 'नीचे ले जाएं' : 'Move Down'}
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-edit-cat-${cat.id}`}
+                              onClick={() => startEditingCategory(cat)}
+                              className="text-slate-400 hover:text-slate-650 dark:text-slate-500 dark:hover:text-slate-350 transition-all p-1 cursor-pointer"
+                              title={lang === 'hi' ? 'नाम बदलें' : 'Rename Category'}
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            {/* Prevent deleting default safety category Vegetables / Others */}
+                            {cat.id !== 'Others' && cat.id !== 'Vegetables' ? (
+                              <button
+                                type="button"
+                                id={`btn-delete-cat-${cat.id}`}
+                                onClick={() => handleDeleteCategory(cat.id)}
+                                className="text-rose-500 hover:text-rose-600 p-1 cursor-pointer"
+                                title={lang === 'hi' ? 'श्रेणी हटाएं' : 'Delete Category'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <span className="text-[9px] text-slate-300 dark:text-slate-700 px-1 font-semibold select-none">
+                                {lang === 'hi' ? 'सुरक्षित' : 'System'}
+                              </span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Mini popup form inline to add rates */}
           {showAddPresetForm && (
@@ -624,7 +1065,7 @@ export default function TarazuModule({
                     onChange={(e) => setNewPresetCategory(e.target.value)}
                     className="w-full text-xs p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-white outline-none cursor-pointer"
                   >
-                    {PRESET_CATEGORIES.map((cat) => (
+                    {categories.map((cat) => (
                       <option key={cat.id} value={cat.id}>
                         {lang === 'hi' ? cat.hi : cat.en}
                       </option>
