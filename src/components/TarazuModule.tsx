@@ -5,6 +5,7 @@ import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
 import { isSpeechSupported, startSpeechListening } from '../utils/speech';
 import { getStoredPresets, saveStoredPresets, PresetRate, getStoredCategories, saveStoredCategories, PresetCategory, getStoredHistory } from '../utils/storage';
+import { useAutoSave } from '../hooks/useAutoSave';
 import NumericKeypad from './NumericKeypad';
 
 interface TarazuModuleProps {
@@ -23,19 +24,71 @@ export default function TarazuModule({
   // Modes: 
   // 'amount_to_weight' (₹ -> KG)
   // 'weight_to_amount' (KG -> ₹)
-  const [mode, setMode] = useState<'amount_to_weight' | 'weight_to_amount'>('amount_to_weight');
+  const [mode, setMode] = useState<'amount_to_weight' | 'weight_to_amount'>(() => {
+    try {
+      const saved = localStorage.getItem('tarazu_active_mode');
+      return (saved === 'amount_to_weight' || saved === 'weight_to_amount') ? saved : 'amount_to_weight';
+    } catch {
+      return 'amount_to_weight';
+    }
+  });
   
   // States
-  const [rate, setRate] = useState('80'); // ₹ per KG
-  const [amount, setAmount] = useState('120'); // Target purchase money
+  const [rate, setRate] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_active_rate') || '80';
+    } catch {
+      return '80';
+    }
+  }); // ₹ per KG
+  const [amount, setAmount] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_active_amount') || '120';
+    } catch {
+      return '120';
+    }
+  }); // Target purchase money
   
   // For Weight -> Amount mode
-  const [weightKg, setWeightKg] = useState('1');
-  const [weightG, setWeightG] = useState('500');
+  const [weightKg, setWeightKg] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_active_weightKg') || '1';
+    } catch {
+      return '1';
+    }
+  });
+  const [weightG, setWeightG] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_active_weightG') || '500';
+    } catch {
+      return '500';
+    }
+  });
 
   // Input Focus State to direct numeric keypad inputs
   // 'rate' | 'amount' | 'kg' | 'g'
-  const [activeInput, setActiveInput] = useState<'rate' | 'amount' | 'kg' | 'g'>('amount');
+  const [activeInput, setActiveInput] = useState<'rate' | 'amount' | 'kg' | 'g'>(() => {
+    try {
+      const saved = localStorage.getItem('tarazu_active_input_field');
+      return (saved === 'rate' || saved === 'amount' || saved === 'kg' || saved === 'g') ? saved : 'amount';
+    } catch {
+      return 'amount';
+    }
+  });
+
+  // Auto-save Tarazu active inputs every 5 seconds
+  useAutoSave(() => {
+    try {
+      localStorage.setItem('tarazu_active_mode', mode);
+      localStorage.setItem('tarazu_active_rate', rate);
+      localStorage.setItem('tarazu_active_amount', amount);
+      localStorage.setItem('tarazu_active_weightKg', weightKg);
+      localStorage.setItem('tarazu_active_weightG', weightG);
+      localStorage.setItem('tarazu_active_input_field', activeInput);
+    } catch (e) {
+      console.warn('Failed to auto-save Tarazu active inputs:', e);
+    }
+  }, 5000);
 
   // Load preset rates and categories
   const [presets, setPresets] = useState<PresetRate[]>([]);

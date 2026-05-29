@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
+import { useAutoSave } from '../hooks/useAutoSave';
 import { Delete, Trash2, Copy, CheckCircle, Scale, Volume2, ShoppingCart, ListPlus, Receipt, Printer, Share2, X, ChevronDown, Plus, Pencil, Check } from 'lucide-react';
 import { Language, HistoryItem, AppSettings, HistoryItemInput } from '../types';
 import { translate } from '../i18n';
@@ -63,8 +64,20 @@ export default function CalculatorModule({
 }: CalculatorModuleProps) {
   const t = translate(lang);
   
-  const [expression, setExpression] = useState('');
-  const [displayVal, setDisplayVal] = useState('0');
+  const [expression, setExpression] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_calc_expression') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [displayVal, setDisplayVal] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_calc_display_val') || '0';
+    } catch {
+      return '0';
+    }
+  });
   const [isDone, setIsDone] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -78,10 +91,28 @@ export default function CalculatorModule({
     }
   });
   const [checkedItemIds, setCheckedItemIds] = useState<string[]>([]);
-  const [newItemName, setNewItemName] = useState('');
+  const [newItemName, setNewItemName] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_calc_new_item_name') || '';
+    } catch {
+      return '';
+    }
+  });
   const [receiptCopied, setReceiptCopied] = useState(false);
-  const [isFractionFormat, setIsFractionFormat] = useState(false);
-  const [isTaxEnabled, setIsTaxEnabled] = useState(false);
+  const [isFractionFormat, setIsFractionFormat] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_calc_is_fraction_format') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isTaxEnabled, setIsTaxEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_calc_is_tax_enabled') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [taxTypes, setTaxTypes] = useState<{ id: string; name: string; rate: number }[]>(() => {
     try {
       const saved = localStorage.getItem('tarazu_calc_taxtypes');
@@ -120,8 +151,38 @@ export default function CalculatorModule({
   const gstPercentage = activeTaxType.rate;
   const taxName = activeTaxType.name;
 
-  const [discountType, setDiscountType] = useState<'percent' | 'flat'>('percent');
-  const [discountValue, setDiscountValue] = useState<number>(0);
+  const [discountType, setDiscountType] = useState<'percent' | 'flat'>(() => {
+    try {
+      const saved = localStorage.getItem('tarazu_calc_discount_type');
+      return (saved === 'percent' || saved === 'flat') ? (saved as 'percent' | 'flat') : 'percent';
+    } catch {
+      return 'percent';
+    }
+  });
+  const [discountValue, setDiscountValue] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('tarazu_calc_discount_value');
+      return saved ? parseFloat(saved) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  // Auto-save Calculator states to localStorage every 5 seconds
+  useAutoSave(() => {
+    try {
+      localStorage.setItem('tarazu_calc_basket', JSON.stringify(basket));
+      localStorage.setItem('tarazu_calc_display_val', displayVal);
+      localStorage.setItem('tarazu_calc_expression', expression);
+      localStorage.setItem('tarazu_calc_new_item_name', newItemName);
+      localStorage.setItem('tarazu_calc_is_tax_enabled', isTaxEnabled ? 'true' : 'false');
+      localStorage.setItem('tarazu_calc_discount_type', discountType);
+      localStorage.setItem('tarazu_calc_discount_value', discountValue.toString());
+      localStorage.setItem('tarazu_calc_is_fraction_format', isFractionFormat ? 'true' : 'false');
+    } catch (e) {
+      console.warn('Failed to auto-save Calculator states:', e);
+    }
+  }, 5000);
 
   const [currency, setCurrency] = useState<string>(() => {
     try {
