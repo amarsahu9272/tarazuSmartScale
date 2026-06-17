@@ -782,7 +782,7 @@ export default function SettingsModule({
             </p>
           </div>
           <a
-            href="https://drive.google.com/file/d/17mXLaAYtEn3-H5Aco3vbTiW1p_kHSK8m/view"
+            href="https://drive.google.com/file/d/1XOft_Y0LikCHPpdhfimjjEQC-YbhCEEF/view?usp=sharing"
             target="_blank"
             rel="noopener noreferrer"
             id="btn-download-app"
