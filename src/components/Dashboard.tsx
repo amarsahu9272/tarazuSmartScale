@@ -3,6 +3,8 @@ import { Scale, RefreshCw, Calculator, TrendingUp, History, Settings, Plus, Sear
 import { Language, HistoryItem, AppSettings } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
+import { getDailyRevenueData } from '../utils/historyHelper';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 interface DashboardProps {
   lang: Language;
@@ -27,21 +29,23 @@ export default function Dashboard({
 
   // Clock updater
   useEffect(() => {
+    const isBatterySaver = !!settings.batterySaver;
     const updateTime = () => {
       const now = new Date();
       setTimeStr(
         now.toLocaleTimeString(lang === 'hi' ? 'hi-IN' : 'en-US', {
           hour: '2-digit',
           minute: '2-digit',
-          second: '2-digit',
+          second: isBatterySaver ? undefined : '2-digit',
           hour12: true,
         })
       );
     };
     updateTime();
-    const interval = setInterval(updateTime, 1000);
+    const intervalTime = isBatterySaver ? 30000 : 1000;
+    const interval = setInterval(updateTime, intervalTime);
     return () => clearInterval(interval);
-  }, [lang]);
+  }, [lang, settings.batterySaver]);
 
   // Calc quick stats
   const totalWeighs = history.filter((h) => h.type === 'tarazu').length;
@@ -142,6 +146,116 @@ export default function Dashboard({
           </div>
           <div className="absolute bottom-0 right-0 h-1 bg-emerald-500 w-0 group-hover:w-full transition-all duration-300"></div>
         </div>
+      </div>
+
+      {/* Daily Revenue Trend chart */}
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/60 rounded-3xl p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-3 select-none">
+          <div className="space-y-1 text-left">
+            <h3 className="font-extrabold text-base text-slate-800 dark:text-white flex items-center gap-2">
+              <span className="p-1.5 bg-emerald-500/10 text-emerald-600 rounded-lg">📊</span>
+              <span>{lang === 'hi' ? 'दैनिक बिक्री एवं राजस्व' : 'Daily Sales Revenue Trend'}</span>
+            </h3>
+            <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">
+              {lang === 'hi' ? 'बहीखाता प्रविष्टियों से स्वचालित लेखा' : 'Chronological income extracted from ledger logs'}
+            </p>
+          </div>
+
+          {(() => {
+            const chartData = getDailyRevenueData(history, settings.preferredCurrency);
+            if (chartData.length === 0) return null;
+            return (
+              <div className="bg-emerald-500/10 text-emerald-800 dark:text-emerald-400 px-3.5 py-1.5 rounded-2xl font-black text-xs font-mono">
+                {lang === 'hi' ? 'कुल संचित:' : 'Aggregated Total:'} {settings.preferredCurrency}{' '}
+                {chartData.reduce((sum, item) => sum + item.revenue, 0).toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </div>
+            );
+          })()}
+        </div>
+
+        {(() => {
+          const chartData = getDailyRevenueData(history, settings.preferredCurrency);
+          if (chartData.length === 0) {
+            return (
+              <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+                <div className="h-12 w-12 bg-slate-50 dark:bg-slate-900 rounded-full flex items-center justify-center text-slate-400 border text-xl border-dashed">📉</div>
+                <p className="text-xs font-bold text-slate-505 dark:text-slate-405 max-w-sm leading-relaxed">
+                  {lang === 'hi'
+                    ? 'अभी तक कोई राजस्व प्रविष्टि नहीं पाई गई। गणना या व्यवसाय बहीखाता चालू करने पर बिक्री राजस्व स्वचालित रूप से यहाँ प्रदर्शित होगा।'
+                    : 'No transactional income parsed from calculations yet. Run selling calculations under Scale or Business tools to generate revenue.'}
+                </p>
+              </div>
+            );
+          }
+          return (
+            <div className="h-64 sm:h-72 w-full mt-2 font-mono text-xs select-none">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={settings.darkMode ? '#334155' : '#e2e8f0'} />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    stroke={settings.darkMode ? '#94a3b8' : '#475569'}
+                    fontSize={10}
+                    fontWeight={600}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    stroke={settings.darkMode ? '#94a3b8' : '#475569'}
+                    fontSize={10}
+                    fontWeight={600}
+                    tickFormatter={(val) => `${settings.preferredCurrency}${val}`}
+                  />
+                  <Tooltip
+                    cursor={{ stroke: '#10b981', strokeWidth: 1, strokeDasharray: '4 4' }}
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="bg-slate-950 text-white dark:bg-white dark:text-slate-900 p-3 rounded-xl border border-transparent shadow-xl font-sans text-xs text-left">
+                            <p className="font-extrabold text-slate-400 dark:text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                              {data.formattedDate}
+                            </p>
+                            <p className="font-black text-sm flex items-center gap-1">
+                              <span className="text-emerald-400 dark:text-emerald-600">●</span>
+                              <span>
+                                {settings.preferredCurrency}{' '}
+                                {Number(payload[0].value).toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </span>
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="#10b981"
+                    strokeWidth={2.5}
+                    fillOpacity={1}
+                    fill="url(#revenueGradient)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Grid of Action buttons */}

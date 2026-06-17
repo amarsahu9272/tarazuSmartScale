@@ -14,6 +14,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   shopName: 'Mera Kirana Store',
   shopPhone: '9876543210',
   shopGst: '',
+  preferredCurrency: '₹',
+  batterySaver: false,
 };
 
 const DEFAULT_PRESETS = [
@@ -46,6 +48,13 @@ export function saveStoredSettings(settings: AppSettings) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
+    }
+
+    // Set battery-saver class on body/html
+    if (settings.batterySaver) {
+      document.documentElement.classList.add('battery-saver');
+    } else {
+      document.documentElement.classList.remove('battery-saver');
     }
   } catch (e) {
     console.error('Failed to save settings', e);

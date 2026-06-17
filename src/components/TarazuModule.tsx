@@ -6,6 +6,7 @@ import { playClickSound, playSuccessSound } from '../utils/audio';
 import { isSpeechSupported, startSpeechListening } from '../utils/speech';
 import { getStoredPresets, saveStoredPresets, PresetRate, getStoredCategories, saveStoredCategories, PresetCategory, getStoredHistory } from '../utils/storage';
 import { useAutoSave } from '../hooks/useAutoSave';
+import { useToast } from './Toast';
 import NumericKeypad from './NumericKeypad';
 
 interface TarazuModuleProps {
@@ -20,6 +21,7 @@ export default function TarazuModule({
   onAddHistoryItem,
 }: TarazuModuleProps) {
   const t = translate(lang);
+  const { toast } = useToast();
   
   // Modes: 
   // 'amount_to_weight' (₹ -> KG)
@@ -76,7 +78,7 @@ export default function TarazuModule({
     }
   });
 
-  // Auto-save Tarazu active inputs every 5 seconds
+  // Auto-save Tarazu active inputs (slower in Battery Saver mode)
   useAutoSave(() => {
     try {
       localStorage.setItem('tarazu_active_mode', mode);
@@ -88,7 +90,7 @@ export default function TarazuModule({
     } catch (e) {
       console.warn('Failed to auto-save Tarazu active inputs:', e);
     }
-  }, 5000);
+  }, settings.batterySaver ? 25000 : 5000);
 
   // Load preset rates and categories
   const [presets, setPresets] = useState<PresetRate[]>([]);
@@ -323,6 +325,46 @@ export default function TarazuModule({
   };
 
   const handleInputChange = (field: 'rate' | 'amount' | 'kg' | 'g', valueStr: string) => {
+    if (valueStr) {
+      const num = parseFloat(valueStr);
+      if (isNaN(num)) {
+        toast(
+          lang === 'hi' ? 'त्रुटि: कृपया एक वैध संख्या दर्ज करें।' : 'Error: Please enter a valid number.',
+          'error'
+        );
+        return;
+      }
+      if (num < 0) {
+        toast(
+          lang === 'hi' ? 'त्रुटि: ऋणात्मक मान की अनुमति नहीं है।' : 'Error: Negative values are not allowed.',
+          'error'
+        );
+        return;
+      }
+
+      if (field === 'rate' && num > 999999) {
+        toast(
+          lang === 'hi' ? 'चेतावनी: दर्ज की गई दर बहुत अधिक है!' : 'Warning: Entered rate is extremely high!',
+          'warning'
+        );
+      } else if (field === 'amount' && num > 99999999) {
+        toast(
+          lang === 'hi' ? 'चेतावनी: दर्ज की गई राशि बहुत अधिक है!' : 'Warning: Entered amount is extremely high!',
+          'warning'
+        );
+      } else if (field === 'kg' && num > 99999) {
+        toast(
+          lang === 'hi' ? 'चेतावनी: वजन (KG) सामान्य सीमा से अधिक है!' : 'Warning: Weight (KG) is exceeding standard limit!',
+          'warning'
+        );
+      } else if (field === 'g' && num >= 1000) {
+        toast(
+          lang === 'hi' ? 'ग्राम 999 से कम होना चाहिए (1000g = 1kg)।' : 'Grams should be less than 1000 (1000g = 1kg).',
+          'warning'
+        );
+      }
+    }
+
     if (field === 'rate') setRate(valueStr);
     else if (field === 'amount') setAmount(valueStr);
     else if (field === 'kg') setWeightKg(valueStr);
@@ -349,9 +391,87 @@ export default function TarazuModule({
     setActiveInput('kg');
   };
 
-  const handleSaveCalculation = () => {
+  const validateCurrentState = (showToast = true): boolean => {
+    const r = parseFloat(rate) || 0;
+    if (isNaN(r) || r <= 0) {
+      if (showToast) {
+        toast(
+          lang === 'hi' ? 'त्रुटि: कृपया 0 से अधिक वैध बिक्री दर (Rate) दर्ज करें।' : 'Error: Please enter a valid selling rate greater than 0.',
+          'error'
+        );
+      }
+      return false;
+    }
+    if (r > 999999) {
+      if (showToast) {
+        toast(
+          lang === 'hi' ? 'त्रुटि: दर्ज बिक्री दर बहुत अधिक है (अधिकतम 9,99,999)।' : 'Error: Entered selling rate is too high (max 999k).',
+          'error'
+        );
+      }
+      return false;
+    }
+
+    if (mode === 'amount_to_weight') {
+      const amt = parseFloat(amount) || 0;
+      if (isNaN(amt) || amt <= 0) {
+        if (showToast) {
+          toast(
+            lang === 'hi' ? 'त्रुटि: कृपया 0 से अधिक वैध मूल्य (Amount) दर्ज करें।' : 'Error: Please enter a valid purchase amount greater than 0.',
+            'error'
+          );
+        }
+        return false;
+      }
+      if (amt > 99999999) {
+        if (showToast) {
+          toast(
+            lang === 'hi' ? 'त्रुटि: दर्ज मूल्य बहुत अधिक है।' : 'Error: Entered purchase amount is too high.',
+            'error'
+          );
+        }
+        return false;
+      }
+    } else {
+      const kgVal = parseFloat(weightKg) || 0;
+      const gVal = parseFloat(weightG) || 0;
+      if (isNaN(kgVal) || isNaN(gVal) || (kgVal <= 0 && gVal <= 0)) {
+        if (showToast) {
+          toast(
+            lang === 'hi' ? 'त्रुटि: कृपया 0 से अधिक कुल वजन (Weight) दर्ज करें।' : 'Error: Please enter a combined weight greater than 0.',
+            'error'
+          );
+        }
+        return false;
+      }
+      if (kgVal > 99999) {
+        if (showToast) {
+          toast(
+            lang === 'hi' ? 'त्रुटि: दर्ज वजन सीमा से अधिक है।' : 'Error: Entered weight exceeds maximum limit.',
+            'error'
+          );
+        }
+        return false;
+      }
+      if (gVal < 0 || gVal >= 1000) {
+        if (showToast) {
+          toast(
+            lang === 'hi' ? 'त्रुटि: ग्राम (Gram) 0-999 के बीच होना चाहिए।' : 'Error: Grams must be between 0 and 999.',
+            'error'
+          );
+        }
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const handleSaveCalculation = (silent = false) => {
+    if (!validateCurrentState(!silent)) return false;
+    
     playSuccessSound(settings.soundEnabled);
     const r = parseFloat(rate) || 0;
+    let savedSuccessfully = false;
 
     if (mode === 'amount_to_weight') {
       const amt = parseFloat(amount) || 0;
@@ -364,7 +484,7 @@ export default function TarazuModule({
           inputAmount: amt,
           resultKg: out.kg,
           resultG: out.g,
-          label: `${lang === 'hi' ? 'खरीद' : 'Buy'} ₹${amt} @ ₹${r}/KG → Weight: ${out.kg} KG ${out.g} G`,
+          label: `${lang === 'hi' ? 'खरीद' : 'Buy'} ${settings.preferredCurrency || '₹'}${amt} @ ${settings.preferredCurrency || '₹'}${r}/KG → Weight: ${out.kg} KG ${out.g} G`,
         };
         onAddHistoryItem(itemData);
         setHistoryItems((prev) => [
@@ -375,6 +495,7 @@ export default function TarazuModule({
           } as HistoryItem,
           ...prev,
         ]);
+        savedSuccessfully = true;
       }
     } else {
       const kgVal = parseFloat(weightKg) || 0;
@@ -388,7 +509,7 @@ export default function TarazuModule({
           inputKg: kgVal,
           inputG: gVal,
           resultAmount: Number(out.totalPrice.toFixed(settings.decimalPrecision)),
-          label: `${lang === 'hi' ? 'वजन' : 'Weigh'} ${kgVal} KG ${gVal} G @ ₹${r}/KG → Price: ₹${out.totalPrice.toFixed(settings.decimalPrecision)}`,
+          label: `${lang === 'hi' ? 'वजन' : 'Weigh'} ${kgVal} KG ${gVal} G @ ${settings.preferredCurrency || '₹'}${r}/KG → Price: ${settings.preferredCurrency || '₹'}${out.totalPrice.toFixed(settings.decimalPrecision)}`,
         };
         onAddHistoryItem(itemData);
         setHistoryItems((prev) => [
@@ -399,8 +520,17 @@ export default function TarazuModule({
           } as HistoryItem,
           ...prev,
         ]);
+        savedSuccessfully = true;
       }
     }
+
+    if (savedSuccessfully && !silent) {
+      toast(
+        lang === 'hi' ? 'सफलता: गणना खाता बही में सहेजी गई!' : 'Success: Calculation saved to ledger!',
+        'success'
+      );
+    }
+    return savedSuccessfully;
   };
 
   // Generate gorgeous digital billing receipt text
@@ -415,18 +545,18 @@ export default function TarazuModule({
     text += ` DATE: ${dateStr}\n`;
     text += ` ITEM CALCULATION (Tarazu)\n`;
     text += `-----------------------------\n`;
-    text += ` Price Rate  : ₹${rate}/KG\n`;
+    text += ` Price Rate  : ${settings.preferredCurrency || '₹'}${rate}/KG\n`;
     
     if (mode === 'amount_to_weight') {
       const out = calculatedOutput as { kg: number, g: number };
-      text += ` Paid Amount : ₹${amount}\n`;
+      text += ` Paid Amount : ${settings.preferredCurrency || '₹'}${amount}\n`;
       text += `-----------------------------\n`;
       text += ` DELIVER WEIGHT: ${out.kg} KG ${out.g} GM\n`;
     } else {
       const out = calculatedOutput as { totalPrice: number };
       text += ` Weight      : ${weightKg} KG ${weightG} GM\n`;
       text += `-----------------------------\n`;
-      text += ` TOTAL BILL  : ₹${out.totalPrice.toFixed(prec)}\n`;
+      text += ` TOTAL BILL  : ${settings.preferredCurrency || '₹'}${out.totalPrice.toFixed(prec)}\n`;
     }
     text += `-----------------------------\n`;
     text += `  ✨ Thank you for visiting! ✨\n`;
@@ -436,17 +566,23 @@ export default function TarazuModule({
   };
 
   const handleCopyToClipboard = () => {
+    if (!validateCurrentState(true)) return;
     const text = getReceiptText();
     navigator.clipboard.writeText(text);
     setCopied(true);
     playSuccessSound(settings.soundEnabled);
+    toast(
+      lang === 'hi' ? 'सफलता: रसीद क्लिपबोर्ड पर कॉपी हुई!' : 'Success: Receipt copied to clipboard!',
+      'success'
+    );
     setTimeout(() => setCopied(false), 2000);
     
     // Save to ledger automatically on copy
-    handleSaveCalculation();
+    handleSaveCalculation(true);
   };
 
   const handleShareReceipt = async () => {
+    if (!validateCurrentState(true)) return;
     playClickSound(settings.soundEnabled);
     const receiptText = getReceiptText();
     
@@ -456,16 +592,23 @@ export default function TarazuModule({
           title: `${settings.shopName} Smart Invoice`,
           text: receiptText,
         });
+        toast(
+          lang === 'hi' ? 'सफलता: रसीद साझा की गई!' : 'Success: Receipt shared successfully!',
+          'success'
+        );
       } catch (e) {
         console.warn('Share cancelled', e);
       }
     } else {
       navigator.clipboard.writeText(receiptText);
-      alert(lang === 'hi' ? 'रसीद क्लिपबोर्ड पर कॉपी हुई!' : 'Receipt copied to clipboard!');
+      toast(
+        lang === 'hi' ? 'सफलता: रसीद क्लिपबोर्ड पर कॉपी हुई!' : 'Success: Receipt copied to clipboard!',
+        'success'
+      );
     }
     
     // Save to scale ledger automatically on share
-    handleSaveCalculation();
+    handleSaveCalculation(true);
   };
 
   // Voice support
@@ -603,10 +746,10 @@ export default function TarazuModule({
               ) : (
                 <div className="text-center">
                   <div className="text-3xl sm:text-4xl font-extrabold tracking-wider text-emerald-200">
-                    ₹{((calculatedOutput as { totalPrice: number }).totalPrice || 0).toFixed(settings.decimalPrecision)}
+                    {settings.preferredCurrency || '₹'}{((calculatedOutput as { totalPrice: number }).totalPrice || 0).toFixed(settings.decimalPrecision)}
                   </div>
                   <p className="text-[10px] text-emerald-600 mt-1 font-sans font-medium">
-                    Rate: ₹{rate}/KG × WEIGHT: {(parseFloat(weightKg) || 0) + ((parseFloat(weightG) || 0) / 1000)} KG
+                    Rate: {settings.preferredCurrency || '₹'}{rate}/KG × WEIGHT: {(parseFloat(weightKg) || 0) + ((parseFloat(weightG) || 0) / 1000)} KG
                   </p>
                 </div>
               )}
@@ -629,10 +772,10 @@ export default function TarazuModule({
                 }`}
               >
                 <label htmlFor="input-rate" className="block text-[8px] uppercase tracking-wider text-emerald-700 font-bold cursor-pointer">
-                  {lang === 'hi' ? 'दर ₹/KG' : 'RATE ₹/KG'}
+                  {lang === 'hi' ? `दर ${settings.preferredCurrency || '₹'}/KG` : `RATE ${settings.preferredCurrency || '₹'}/KG`}
                 </label>
                 <div className="mt-0.5 flex items-center justify-center font-mono text-xs">
-                  <span className="mr-0.5 text-[10px] text-emerald-500 font-bold">₹</span>
+                  <span className="mr-0.5 text-[10px] text-emerald-500 font-bold">{settings.preferredCurrency || '₹'}</span>
                   <input
                     id="input-rate"
                     type="text"
@@ -665,7 +808,7 @@ export default function TarazuModule({
                     {lang === 'hi' ? 'खरीद मूल्य बजट' : 'BUDGET AMOUNT'}
                   </label>
                   <div className="mt-0.5 flex items-center justify-center font-mono text-xs">
-                    <span className="mr-0.5 text-[10px] text-emerald-500 font-bold">₹</span>
+                    <span className="mr-0.5 text-[10px] text-emerald-500 font-bold">{settings.preferredCurrency || '₹'}</span>
                     <input
                       id="input-amount"
                       type="text"
@@ -865,7 +1008,7 @@ export default function TarazuModule({
                     `}
                   >
                     <span>{lang === 'hi' ? pr.nameHi : pr.name}</span>
-                    <span className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded text-[10px] font-bold text-emerald-600">₹{pr.rate}</span>
+                    <span className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded text-[10px] font-bold text-emerald-600">{settings.preferredCurrency || '₹'}{pr.rate}</span>
                     
                     <span
                       onClick={(e) => handleDeletePreset(pr.id, e)}
@@ -1152,7 +1295,7 @@ export default function TarazuModule({
           {/* Quick Shortcuts Increments row */}
           <div className="flex gap-2 items-center justify-between overflow-x-auto whitespace-nowrap scrollbar-none py-0.5">
             <span className="text-[9px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex-shrink-0">
-              {mode === 'amount_to_weight' ? '+₹ QUICK PAY:' : '+KG/GM WEIGH:'}
+              {mode === 'amount_to_weight' ? `+${settings.preferredCurrency || '₹'} QUICK PAY:` : '+KG/GM WEIGH:'}
             </span>
             {mode === 'amount_to_weight' ? (
               <div className="flex gap-1">

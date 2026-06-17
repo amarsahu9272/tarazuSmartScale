@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { useAutoSave } from '../hooks/useAutoSave';
-import { Delete, Trash2, Copy, CheckCircle, Scale, Volume2, ShoppingCart, ListPlus, Receipt, Printer, Share2, X, ChevronDown, Plus, Pencil, Check } from 'lucide-react';
+import { Delete, Trash2, Copy, CheckCircle, Scale, Volume2, ShoppingCart, ListPlus, Receipt, Printer, Share2, X, ChevronDown, Plus, Pencil, Check, Mic, MicOff } from 'lucide-react';
 import { Language, HistoryItem, AppSettings, HistoryItemInput } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
@@ -57,6 +57,105 @@ const formatAsFraction = (val: number): string => {
   return `${sign}${wholeStr}${bestN}/${bestD}`;
 };
 
+const parseDictatedCalculation = (text: string, currentLang: Language) => {
+  let cleaned = text.trim().toLowerCase();
+  
+  // Normalize Hindi digits to standard digits
+  const devanagariDigits = ['०','१','२','३','४','५','६','७','८','९'];
+  for (let i = 0; i < 10; i++) {
+    cleaned = cleaned.replace(new RegExp(devanagariDigits[i], 'g'), String(i));
+  }
+
+  // Replace common spoken arithmetic words with signs
+  cleaned = cleaned.replace(/\bplus\b/g, '+');
+  cleaned = cleaned.replace(/\bminus\b/g, '-');
+  cleaned = cleaned.replace(/\b(times|multiplied by|multiply|into)\b/g, '×');
+  cleaned = cleaned.replace(/\b(divided by|divide|by)\b/g, '÷');
+  
+  cleaned = cleaned.replace(/\b(जोड़|प्लस|धन)\b/g, '+');
+  cleaned = cleaned.replace(/\b(घटाव|माइनस|ऋण)\b/g, '-');
+  cleaned = cleaned.replace(/\b(गुणा|गुना|इंटू)\b/g, '×');
+  cleaned = cleaned.replace(/\b(भाग|डिवाइड)\b/g, '÷');
+
+  // 1. Math equations search: "X + Y", "X × Y", etc.
+  const arithmeticRegex = /(\d+(?:\.\d+)?)\s*([\+\-×÷])\s*(\d+(?:\.\d+)?)/;
+  const arithMatch = cleaned.match(arithmeticRegex);
+  if (arithMatch) {
+    const val1 = parseFloat(arithMatch[1]);
+    const op = arithMatch[2];
+    const val2 = parseFloat(arithMatch[3]);
+    let result = 0;
+    if (op === '+') result = val1 + val2;
+    else if (op === '-') result = val1 - val2;
+    else if (op === '×') result = val1 * val2;
+    else if (op === '÷') result = val1 / (val2 || 1);
+    
+    return {
+      success: true,
+      itemName: '',
+      quantity: val1,
+      rate: val2,
+      operation: op,
+      result,
+      expression: `${val1} ${op} ${val2}`
+    };
+  }
+
+  // 2. Merchant calculations: "Name Quantity Unit Rate" or "Quantity Unit Name Rate" or "Quantity @ Rate"
+  const allNumbers = cleaned.match(/\d+(?:\.\d+)?/g);
+  if (allNumbers && allNumbers.length >= 2) {
+    const num1 = parseFloat(allNumbers[0]);
+    const num2 = parseFloat(allNumbers[1]);
+    
+    let quantity = num1;
+    let rate = num2;
+    
+    const rateIndicators = /(?:at|@|per|for|of|के भाव से|रुपये|रुपए|रुपयों|की दर से)\s*(\d+(?:\.\d+)?)/;
+    const rateMatch = cleaned.match(rateIndicators);
+    if (rateMatch) {
+      rate = parseFloat(rateMatch[1]);
+      quantity = num1 === rate ? num2 : num1;
+    }
+
+    // Try finding the item name by removing quantity, rate, units, and stop words
+    let itemNameCandidate = text;
+    itemNameCandidate = itemNameCandidate.replace(new RegExp(`\\b${quantity}\\b`, 'g'), '');
+    itemNameCandidate = itemNameCandidate.replace(new RegExp(`\\b${rate}\\b`, 'g'), '');
+    
+    const stopWords = [
+      'kilos', 'kilo', 'kg', 'kilograms', 'lbs', 'pound', 'pounds', 'grams', 'gram', 'gm', 'items', 'packet', 'pieces', 'rupees', 'rupee', 'rs',
+      'at', 'of', 'rate', 'for', 'per', 'a', 'piece', 'with', 'and', 'the', 'at rate', 'of rate',
+      'किलो', 'किलोग्राम', 'किग्रा', 'ग्राम', 'पैकेट', 'पीस', 'नग', 'लीटर', 'रुपये', 'रूपए', 'के भाव से', 'रुपए', 'रुपयों', 'दर से', 'की दर', 'रु', 'का', 'की', 'के'
+    ];
+    stopWords.forEach(word => {
+      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      itemNameCandidate = itemNameCandidate.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), '');
+      itemNameCandidate = itemNameCandidate.replace(new RegExp(`\\s${escaped}\\s`, 'gi'), ' ');
+      if (currentLang === 'hi') {
+        itemNameCandidate = itemNameCandidate.replace(new RegExp(escaped, 'g'), '');
+      }
+    });
+
+    let finalItemName = itemNameCandidate.replace(/[0-9\+\-\*\/×÷]/g, '').replace(/\s+/g, ' ').trim();
+    if (finalItemName) {
+      finalItemName = finalItemName.charAt(0).toUpperCase() + finalItemName.slice(1);
+    }
+
+    const calculatedResult = quantity * rate;
+    return {
+      success: true,
+      itemName: finalItemName,
+      quantity,
+      rate,
+      operation: '×',
+      result: calculatedResult,
+      expression: `${quantity} × ${rate}`
+    };
+  }
+
+  return { success: false, itemName: '', quantity: 0, rate: 0, result: 0, expression: '' };
+};
+
 export default function CalculatorModule({
   lang,
   settings,
@@ -80,6 +179,85 @@ export default function CalculatorModule({
   });
   const [isDone, setIsDone] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Voice recognition state
+  const [isRecording, setIsRecording] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+
+  const startVoiceDictation = () => {
+    const SpeechRecognitionAPI =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionAPI) {
+      setVoiceError(lang === 'hi' ? 'आपका ब्राउज़र वॉयस डिक्टेशन का समर्थन नहीं करता है' : 'Your browser does not support Voice Dictation');
+      playClickSound(settings.soundEnabled);
+      setTimeout(() => setVoiceError(null), 4000);
+      return;
+    }
+
+    playClickSound(settings.soundEnabled);
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = false;
+    recognition.lang = lang === 'hi' ? 'hi-IN' : 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+      setVoiceStatus(lang === 'hi' ? 'विशेषज्ञ श्रवण... बोलिए (उदा. "१० आलू ५० रुपये")' : 'Listening... speak clear (e.g., "10 potatoes at 50")');
+      setVoiceError(null);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error:', event);
+      setIsRecording(false);
+      if (event.error === 'not-allowed') {
+        setVoiceError(lang === 'hi' ? 'माइक अनुमति अस्वीकृत। कृप्या अनुमति प्रदान करें या ऊपर नए टैब में खोलें।' : 'Microphone blocked. Please grant access or open in a new tab.');
+      } else {
+        setVoiceError(lang === 'hi' ? 'शब्दावली पहचानी नहीं जा सकी। कृपया पुनः प्रयास करें।' : 'Speech capture empty or error. Try again.');
+      }
+      setTimeout(() => setVoiceError(null), 4500);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      setVoiceStatus(null);
+    };
+
+    recognition.onresult = (event: any) => {
+      const speechToText = event.results[0][0].transcript;
+      playSuccessSound(settings.soundEnabled);
+      
+      const parsed = parseDictatedCalculation(speechToText, lang);
+      if (parsed.success) {
+        if (parsed.itemName) {
+          setNewItemName(parsed.itemName);
+        }
+        if (parsed.expression) {
+          setExpression(parsed.expression);
+        }
+        const formattedRes = String(Number(parsed.result.toFixed(settings.decimalPrecision)));
+        setDisplayVal(formattedRes);
+        setIsDone(true);
+
+        onAddHistoryItem({
+          type: 'calculator',
+          expression: parsed.itemName ? `${parsed.itemName} (${parsed.expression})` : parsed.expression,
+          result: formattedRes,
+          label: lang === 'hi'
+            ? `आवाज़ डिक्टेशन: ${speechToText} (${parsed.expression} = ${formattedRes})`
+            : `Voice Dictation: "${speechToText}" (${parsed.expression} = ${formattedRes})`,
+        });
+      } else {
+        setNewItemName(speechToText);
+        setVoiceError(lang === 'hi' ? `आंशिक रूप से पहचाना गया, सामान नाम: "${speechToText}"` : `Directly added to item name: "${speechToText}"`);
+        setTimeout(() => setVoiceError(null), 4500);
+      }
+    };
+
+    recognition.start();
+  };
 
   // Basket builder state
   const [basket, setBasket] = useState<{ id: string; name: string; amount: number; note?: string }[]>(() => {
@@ -168,7 +346,45 @@ export default function CalculatorModule({
     }
   });
 
-  // Auto-save Calculator states to localStorage every 5 seconds
+  const [calcMemory, setCalcMemory] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('tarazu_calc_memory');
+      return saved ? parseFloat(saved) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const [calcTaxEnabled, setCalcTaxEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('tarazu_calc_live_tax_enabled') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [calcTaxRate, setCalcTaxRate] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('tarazu_calc_live_tax_rate');
+      return saved ? parseFloat(saved) : 18;
+    } catch {
+      return 18;
+    }
+  });
+
+  const [calcUnit, setCalcUnit] = useState<'none' | 'kg' | 'lbs'>(() => {
+    try {
+      const saved = localStorage.getItem('tarazu_calc_unit');
+      return (saved === 'kg' || saved === 'lbs') ? saved : 'none';
+    } catch {
+      return 'none';
+    }
+  });
+
+  const [memoryFlash, setMemoryFlash] = useState<'add' | 'sub' | null>(null);
+  const [memoryFlashKey, setMemoryFlashKey] = useState<number>(0);
+
+  // Auto-save Calculator states to localStorage (throttled in Battery Saver mode)
   useAutoSave(() => {
     try {
       localStorage.setItem('tarazu_calc_basket', JSON.stringify(basket));
@@ -179,18 +395,52 @@ export default function CalculatorModule({
       localStorage.setItem('tarazu_calc_discount_type', discountType);
       localStorage.setItem('tarazu_calc_discount_value', discountValue.toString());
       localStorage.setItem('tarazu_calc_is_fraction_format', isFractionFormat ? 'true' : 'false');
+      localStorage.setItem('tarazu_calc_memory', calcMemory.toString());
+      localStorage.setItem('tarazu_calc_live_tax_enabled', calcTaxEnabled ? 'true' : 'false');
+      localStorage.setItem('tarazu_calc_live_tax_rate', calcTaxRate.toString());
+      localStorage.setItem('tarazu_calc_unit', calcUnit);
     } catch (e) {
       console.warn('Failed to auto-save Calculator states:', e);
     }
-  }, 5000);
+  }, settings.batterySaver ? 25000 : 5000);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tarazu_calc_memory', calcMemory.toString());
+    } catch (e) {}
+  }, [calcMemory]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tarazu_calc_live_tax_enabled', calcTaxEnabled ? 'true' : 'false');
+    } catch (e) {}
+  }, [calcTaxEnabled]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tarazu_calc_live_tax_rate', calcTaxRate.toString());
+    } catch (e) {}
+  }, [calcTaxRate]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tarazu_calc_unit', calcUnit);
+    } catch (e) {}
+  }, [calcUnit]);
 
   const [currency, setCurrency] = useState<string>(() => {
     try {
-      return localStorage.getItem('tarazu_calc_currency') || '₹';
+      return settings.preferredCurrency || localStorage.getItem('tarazu_calc_currency') || '₹';
     } catch (e) {
-      return '₹';
+      return settings.preferredCurrency || '₹';
     }
   });
+
+  useEffect(() => {
+    if (settings.preferredCurrency) {
+      setCurrency(settings.preferredCurrency);
+    }
+  }, [settings.preferredCurrency]);
   const [showCurrencyMenu, setShowCurrencyMenu] = useState(false);
   const [longPressTimeout, setLongPressTimeout] = useState<any>(null);
 
@@ -236,11 +486,16 @@ export default function CalculatorModule({
   }, [activeTaxTypeId]);
 
   const addToBasket = () => {
-    const val = parseFloat(displayVal);
+    let val = parseFloat(displayVal);
     if (isNaN(val)) return;
 
+    if (calcTaxEnabled) {
+      val = val * (1 + calcTaxRate / 100);
+    }
+
+    const taxSuffix = calcTaxEnabled ? ` (+${calcTaxRate}% Tax)` : '';
     // Use current input name or default
-    const itemLabel = newItemName.trim() || (lang === 'hi' ? `सामान #${basket.length + 1}` : `Item #${basket.length + 1}`);
+    const itemLabel = (newItemName.trim() || (lang === 'hi' ? `सामान #${basket.length + 1}` : `Item #${basket.length + 1}`)) + taxSuffix;
     const newItem = {
       id: Date.now().toString(),
       name: itemLabel,
@@ -250,6 +505,27 @@ export default function CalculatorModule({
 
     setBasket([...basket, newItem]);
     setNewItemName('');
+    playSuccessSound(settings.soundEnabled);
+  };
+
+  const quickSum = () => {
+    let val = parseFloat(displayVal);
+    if (isNaN(val)) return;
+
+    if (calcTaxEnabled) {
+      val = val * (1 + calcTaxRate / 100);
+    }
+
+    const taxSuffix = calcTaxEnabled ? ` (+${calcTaxRate}% Tax)` : '';
+    const itemLabel = (lang === 'hi' ? `त्वरित योग #${basket.length + 1}` : `Quick Sum #${basket.length + 1}`) + taxSuffix;
+    const newItem = {
+      id: Date.now().toString(),
+      name: itemLabel,
+      amount: Number(val.toFixed(settings.decimalPrecision)),
+      note: '',
+    };
+
+    setBasket([...basket, newItem]);
     playSuccessSound(settings.soundEnabled);
   };
 
@@ -570,7 +846,7 @@ export default function CalculatorModule({
       type: 'calculator',
       expression: `${val} + ${rateVal}% GST`,
       result: totalStr,
-      label: `₹${val} + ${rateVal}% Business GST = ₹${totalStr}`,
+      label: `${currency}${val} + ${rateVal}% Business GST = ${currency}${totalStr}`,
     });
   };
 
@@ -589,7 +865,7 @@ export default function CalculatorModule({
       type: 'calculator',
       expression: `${val} - ${rateVal}% GST Remove`,
       result: baseStr,
-      label: `₹${val} - ${rateVal}% GST Deducted = ₹${baseStr}`,
+      label: `${currency}${val} - ${rateVal}% GST Deducted = ${currency}${baseStr}`,
     });
   };
 
@@ -608,8 +884,54 @@ export default function CalculatorModule({
       type: 'calculator',
       expression: `${val} - ${discVal}% Disc`,
       result: finalStr,
-      label: `₹${val} - ${discVal}% Discount Coupon = ₹${finalStr}`,
+      label: `${currency}${val} - ${discVal}% Discount Coupon = ${currency}${finalStr}`,
     });
+  };
+
+  const pressMPlus = () => {
+    playSuccessSound(settings.soundEnabled);
+    const displayedVal = parseFloat(displayVal);
+    if (!isNaN(displayedVal)) {
+      const actualVal = calcTaxEnabled ? displayedVal * (1 + calcTaxRate / 100) : displayedVal;
+      const newMemory = calcMemory + actualVal;
+      setCalcMemory(newMemory);
+      setExpression(lang === 'hi' 
+        ? `मेमरी योग M+: +${actualVal.toFixed(settings.decimalPrecision)}` 
+        : `Memory Add M+: +${actualVal.toFixed(settings.decimalPrecision)}`);
+      setIsDone(true);
+      setMemoryFlash('add');
+      setMemoryFlashKey(prev => prev + 1);
+    }
+  };
+
+  const pressMMinus = () => {
+    playSuccessSound(settings.soundEnabled);
+    const displayedVal = parseFloat(displayVal);
+    if (!isNaN(displayedVal)) {
+      const actualVal = calcTaxEnabled ? displayedVal * (1 + calcTaxRate / 100) : displayedVal;
+      const newMemory = calcMemory - actualVal;
+      setCalcMemory(newMemory);
+      setExpression(lang === 'hi' 
+        ? `मेमरी घटाव M-: -${actualVal.toFixed(settings.decimalPrecision)}` 
+        : `Memory Sub M-: -${actualVal.toFixed(settings.decimalPrecision)}`);
+      setIsDone(true);
+      setMemoryFlash('sub');
+      setMemoryFlashKey(prev => prev + 1);
+    }
+  };
+
+  const pressMR = () => {
+    playSuccessSound(settings.soundEnabled);
+    const formatted = String(Number(calcMemory.toFixed(settings.decimalPrecision)));
+    setDisplayVal(formatted);
+    setExpression(lang === 'hi' ? `मेमरी रिकॉल (MR)` : `Memory Recall (MR)`);
+    setIsDone(true);
+  };
+
+  const pressMC = () => {
+    playSuccessSound(settings.soundEnabled);
+    setCalcMemory(0);
+    setExpression(lang === 'hi' ? `मेमरी साफ़ (MC)` : `Memory Clear (MC)`);
   };
 
   const handleCopy = () => {
@@ -618,6 +940,17 @@ export default function CalculatorModule({
     playSuccessSound(settings.soundEnabled);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const activeFinalValue = calcTaxEnabled && !isNaN(parseFloat(displayVal))
+    ? parseFloat(displayVal) * (1 + calcTaxRate / 100)
+    : parseFloat(displayVal);
+
+  const hasConversion = !isNaN(activeFinalValue) && calcUnit !== 'none';
+  const convertedText = hasConversion
+    ? (calcUnit === 'kg'
+        ? `${(activeFinalValue * 2.20462).toFixed(3)} lbs`
+        : `${(activeFinalValue / 2.20462).toFixed(3)} kg`)
+    : '';
 
   return (
     <div className="max-w-md mx-auto space-y-6">
@@ -628,16 +961,212 @@ export default function CalculatorModule({
         {/* Subtle decorative grid background for physical calculator aesthetics */}
         <div className="absolute inset-0 bg-grid-white/[0.02] pointer-events-none"></div>
 
+        {/* Voice status/error alert overlays */}
+        {voiceStatus && (
+          <div className="bg-slate-950 border border-slate-800/85 p-3 rounded-2xl flex items-center gap-3 relative z-10 animate-pulse border-emerald-500/30">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-450 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+            </span>
+            <span className="text-[11px] font-bold text-emerald-400 font-mono">{voiceStatus}</span>
+          </div>
+        )}
+        
+        {voiceError && (
+          <div className="bg-rose-950/80 border border-rose-900 p-3 rounded-2xl flex items-center justify-between gap-2 relative z-10">
+            <span className="text-[11px] font-bold text-rose-300">{voiceError}</span>
+            <button 
+              type="button" 
+              onClick={() => setVoiceError(null)} 
+              className="text-xs font-black text-rose-400 hover:text-rose-300 px-1.5 py-0.5 rounded cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* LED Screen */}
         <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-right select-all font-mono shadow-inner relative z-10 select-none">
-          <div className="text-emerald-700/80 text-[10px] uppercase font-bold tracking-widest absolute top-2 left-3">
-            Digital LED Monitor
+          <div className="flex items-center justify-between gap-2 mb-2 select-none border-b border-slate-900/40 pb-1.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-emerald-700/80 text-[10px] uppercase font-bold tracking-widest hidden xs:inline">
+                Digital LED Monitor
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  playClickSound(settings.soundEnabled);
+                  setCalcUnit(prev => prev === 'none' ? 'kg' : prev === 'kg' ? 'lbs' : 'none');
+                }}
+                className="px-2 py-0.5 rounded bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 text-slate-300 text-[9px] font-extrabold uppercase transition-all tracking-wider flex items-center gap-1 active:scale-95 cursor-pointer shadow-sm hover:border-slate-755"
+                title={lang === 'hi' ? 'थोक इकाई टॉगल करें (NONE ⇄ KG ⇄ LBS)' : 'Toggle Wholesale Units (NONE ⇄ KG ⇄ LBS)'}
+              >
+                <Scale className="w-2.5 h-2.5 text-indigo-400" />
+                <span>{lang === 'hi' ? 'इकाई:' : 'Unit:'} {calcUnit.toUpperCase()}</span>
+              </button>
+
+              {/* Voice-to-text dictation trigger button */}
+              <button
+                type="button"
+                onClick={startVoiceDictation}
+                className={`px-2 py-0.5 rounded border text-[9px] font-extrabold uppercase transition-all tracking-wider flex items-center gap-1 active:scale-95 cursor-pointer shadow-sm ${
+                  isRecording 
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse' 
+                    : 'bg-slate-900/90 hover:bg-slate-800/90 border-slate-800 hover:border-slate-755 text-slate-300'
+                }`}
+                title={lang === 'hi' ? 'आवाज़ द्वारा डिक्टेट करें (hands-free)' : 'Voice-to-Text Dictate (hands-free)'}
+              >
+                {isRecording ? (
+                  <MicOff className="w-2.5 h-2.5 text-rose-400" />
+                ) : (
+                  <Mic className="w-2.5 h-2.5 text-emerald-400" />
+                )}
+                <span>{isRecording ? (lang === 'hi' ? 'सुन रहा है...' : 'Listening...') : (lang === 'hi' ? 'आवाज़' : 'Voice')}</span>
+              </button>
+            </div>
+
+            {calcMemory !== 0 && (
+              <motion.div
+                key={memoryFlashKey}
+                initial={
+                  memoryFlash === 'add'
+                    ? { backgroundColor: 'rgba(52, 211, 153, 0.45)', scale: 1.15 }
+                    : memoryFlash === 'sub'
+                    ? { backgroundColor: 'rgba(239, 68, 68, 0.45)', scale: 1.15 }
+                    : { backgroundColor: 'rgba(2, 44, 23, 0.6)', scale: 1 }
+                }
+                animate={{
+                  backgroundColor: 'rgba(2, 44, 23, 0.6)',
+                  scale: 1,
+                }}
+                transition={{ duration: 0.4, ease: 'easeOut' }}
+                onAnimationComplete={() => {
+                  setMemoryFlash(null);
+                }}
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[8px] uppercase font-bold tracking-wider shadow-sm border transition-colors ${
+                  memoryFlash === 'add'
+                    ? 'text-emerald-300 border-emerald-400 bg-emerald-950/60'
+                    : memoryFlash === 'sub'
+                    ? 'text-rose-300 border-rose-500 bg-rose-950/60'
+                    : 'text-emerald-400 border-emerald-900/40 bg-emerald-950/60'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                    memoryFlash === 'add'
+                      ? 'bg-emerald-300 animate-ping'
+                      : memoryFlash === 'sub'
+                      ? 'bg-rose-300 animate-ping'
+                      : 'bg-emerald-400'
+                  }`}
+                ></span>
+                <span>M = {currency}{Number(calcMemory.toFixed(settings.decimalPrecision))}</span>
+              </motion.div>
+            )}
           </div>
+
           <div className="h-6 text-slate-500 font-semibold text-xs truncate pt-1 tracking-wider">
             {expression}
           </div>
-          <div className="text-3xl sm:text-4xl font-extrabold text-emerald-400 font-mono tracking-wide truncate mt-1">
-            {displayVal}
+          {/* If live tax is enabled, show subtotal & tax details */}
+          {calcTaxEnabled && !isNaN(parseFloat(displayVal)) ? (
+            <div className="flex flex-col mt-1 pt-1.5 border-t border-slate-900/60 font-mono text-right">
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold">
+                <span>{lang === 'hi' ? 'मूल्य:' : 'BASE:'}</span>
+                <span>{currency}{parseFloat(displayVal).toFixed(settings.decimalPrecision)}</span>
+              </div>
+              <div className="flex justify-between items-center text-[10px] text-amber-500/80 font-bold mb-0.5">
+                <span>{lang === 'hi' ? `कर +${calcTaxRate}%:` : `TAX +${calcTaxRate}%:`}</span>
+                <span>+{currency}{((parseFloat(displayVal) * calcTaxRate) / 100).toFixed(settings.decimalPrecision)}</span>
+              </div>
+              <div className="flex justify-between items-center text-sm font-black text-amber-400 border-t border-dashed border-slate-900 pt-1">
+                <span className="text-[8px] uppercase tracking-wider text-amber-500 bg-amber-950/40 px-1.5 py-0.5 border border-amber-900/30 rounded font-sans leading-none">{lang === 'hi' ? 'टैक्स सहित' : 'Tax-incl'}</span>
+                <span className="text-lg sm:text-xl text-amber-400">
+                  {currency}{(parseFloat(displayVal) * (1 + calcTaxRate / 100)).toFixed(settings.decimalPrecision)}
+                </span>
+              </div>
+              {hasConversion && (
+                <div className="flex justify-between items-center text-xs font-bold text-indigo-400 border-t border-dotted border-slate-900/80 pt-1 mt-1 font-sans">
+                  <span className="text-[8px] uppercase tracking-wider text-indigo-400 bg-indigo-950/30 px-1 py-0.5 border border-indigo-900/20 rounded-md">{lang === 'hi' ? 'थोक रूपांतरण' : 'Wholesale Conv'}</span>
+                  <span className="font-mono text-indigo-300">
+                    {convertedText}
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-end">
+              <div className="text-3xl sm:text-4xl font-extrabold text-emerald-400 font-mono tracking-wide truncate mt-1">
+                {displayVal}
+                {calcUnit !== 'none' && <span className="text-sm font-black text-slate-500 ml-1.5 uppercase">{calcUnit}</span>}
+              </div>
+              {hasConversion && (
+                <div className="flex justify-between items-center w-full text-xs font-bold text-indigo-400 border-t border-dashed border-slate-900/60 pt-1.5 mt-1 font-sans">
+                  <span className="text-[8px] uppercase tracking-wider text-indigo-400 bg-indigo-950/30 px-1 py-0.5 border border-indigo-900/20 rounded-md">{lang === 'hi' ? 'थोक रूपांतरण' : 'Wholesale Conv'}</span>
+                  <span className="font-mono text-indigo-300">
+                    ≈ {convertedText}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Live Display Tax Control Group */}
+        <div className="bg-slate-950/40 border border-slate-800 p-2.5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 relative z-10 select-none">
+          <div className="flex items-center gap-2">
+            <label className="relative inline-flex items-center cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={calcTaxEnabled}
+                onChange={(e) => {
+                  playClickSound(settings.soundEnabled);
+                  setCalcTaxEnabled(e.target.checked);
+                }}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4.5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[4px] after:left-[2px] after:bg-white after:border-gray-500 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500"></div>
+              <span className="ml-2 text-[11px] font-extrabold uppercase tracking-wide text-slate-350">
+                {lang === 'hi' ? 'टैक्स लागू करें' : 'Apply Tax'}
+              </span>
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+            <span className="text-[10px] uppercase font-bold text-slate-500">{lang === 'hi' ? 'दर %:' : 'Tax %:'}</span>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={calcTaxRate}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  setCalcTaxRate(isNaN(val) ? 0 : val);
+                }}
+                className="w-14 bg-slate-900 border border-slate-800 rounded-lg text-center font-mono font-bold text-xs text-amber-400 py-1 outline-none focus:ring-1 focus:ring-amber-500/50"
+              />
+              <div className="flex gap-1">
+                {[5, 12, 18].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      playClickSound(settings.soundEnabled);
+                      setCalcTaxRate(preset);
+                    }}
+                    className={`px-1.5 py-1 text-[9px] font-mono font-bold rounded-md border transition-all cursor-pointer ${
+                      calcTaxRate === preset
+                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/50'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {preset}%
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -675,21 +1204,99 @@ export default function CalculatorModule({
         </div>
 
         {/* ADD TO BASKET ACTION BAR */}
-        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-2.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 relative z-10 select-none">
-          <input
-            type="text"
-            placeholder={lang === 'hi' ? 'सामान का नाम (उदा. आलू)' : 'Item name (e.g. Potato)'}
-            value={newItemName}
-            onChange={(e) => setNewItemName(e.target.value)}
-            className="flex-1 bg-slate-900 border border-slate-800 text-xs py-1.5 px-3 rounded-xl text-slate-100 outline-none focus:ring-1 focus:ring-emerald-500/50 placeholder-slate-650 font-bold text-center sm:text-left"
-          />
+        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-2.5 flex flex-col gap-2 relative z-10 select-none">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="flex-1 relative flex items-center pr-0">
+              <input
+                type="text"
+                placeholder={lang === 'hi' ? '  सामान का नाम (उदा. आलू)' : '  Item name (e.g. Potato)'}
+                value={newItemName}
+                onChange={(e) => setNewItemName(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 text-xs py-1.5 pl-3 pr-9 rounded-xl text-slate-100 outline-none focus:ring-1 focus:ring-emerald-500/50 placeholder-slate-650 font-bold text-center "
+              />
+              <button
+                type="button"
+                onClick={startVoiceDictation}
+                className={`absolute right-2.5 p-1 rounded-md transition-all cursor-pointer ${
+                  isRecording 
+                    ? 'text-rose-450 bg-rose-500/10 animate-pulse' 
+                    : 'text-slate-400 hover:text-emerald-450 hover:bg-slate-800'
+                }`}
+                title={lang === 'hi' ? 'आवाज़ से सामान नाम और हिसाब डिक्टेट करें' : 'Dictate item name and calculations hands-free'}
+              >
+                {isRecording ? (
+                  <MicOff className="w-3.5 h-3.5 text-rose-500" />
+                ) : (
+                  <Mic className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={addToBasket}
+              className="bg-emerald-600 hover:bg-emerald-500 font-extrabold text-white text-[11px] px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 select-none active:scale-95 shadow-md shadow-slate-950 shrink-0"
+            >
+              <ListPlus className="w-3.5 h-3.5" />
+              <span>{lang === 'hi' ? `जोड़ें: ${currency}${displayVal}` : `Add: ${currency}${displayVal}`}</span>
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={quickSum}
+              className="flex-1 bg-slate-800 hover:bg-slate-700/90 border border-slate-700 font-extrabold text-amber-400 text-[11px] py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 select-none active:scale-95 shadow-md shadow-slate-950"
+              title={lang === 'hi' ? 'सामान जोड़े बिना तुरंत कुल योग में जोड़ें' : 'Add to running total without clearing current work'}
+            >
+              <Plus className="w-3.5 h-3.5 text-amber-500" />
+              <span>{lang === 'hi' ? `त्वरित योग: +${currency}${displayVal}` : `Quick Sum: +${currency}${displayVal}`}</span>
+            </button>
+            {basket.length > 0 && (
+              <button
+                type="button"
+                onClick={clearBasket}
+                className="bg-rose-950/40 hover:bg-rose-900/30 border border-rose-900/40 font-extrabold text-rose-400 text-[11px] px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 select-none active:scale-95 shadow-md shadow-slate-950"
+                title={lang === 'hi' ? 'टोकरी साफ़ करें' : 'Clear entire list'}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-450" />
+                <span>{lang === 'hi' ? 'सूची हटाएं' : 'Clear List'}</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Memory operations bar */}
+        <div className="grid grid-cols-4 gap-2.5 relative z-10 select-none">
           <button
             type="button"
-            onClick={addToBasket}
-            className="bg-emerald-600 hover:bg-emerald-500 font-extrabold text-white text-[11px] px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 select-none active:scale-95 shadow-md shadow-slate-950"
+            onClick={pressMC}
+            className="py-2 bg-slate-800/80 hover:bg-slate-755 border border-slate-800/80 text-amber-500 font-black text-xs rounded-xl active:scale-95 transition-all cursor-pointer shadow-sm uppercase flex items-center justify-center gap-1"
+            title="Memory Clear (MC)"
           >
-            <ListPlus className="w-3.5 h-3.5" />
-            <span>{lang === 'hi' ? `जोड़ें: ₹${displayVal}` : `Add: ₹${displayVal}`}</span>
+            MC
+          </button>
+          <button
+            type="button"
+            onClick={pressMR}
+            className="py-2 bg-slate-800/80 hover:bg-slate-755 border border-slate-800/80 text-amber-500 font-black text-xs rounded-xl active:scale-95 transition-all cursor-pointer shadow-sm uppercase flex items-center justify-center gap-1"
+            title="Memory Recall (MR)"
+          >
+            MR
+          </button>
+          <button
+            type="button"
+            onClick={pressMMinus}
+            className="py-2 bg-slate-800/80 hover:bg-slate-755 border border-slate-800/80 text-emerald-400 font-black text-xs rounded-xl active:scale-95 transition-all cursor-pointer shadow-sm uppercase flex items-center justify-center gap-1"
+            title="Memory Subtract (M-)"
+          >
+            M-
+          </button>
+          <button
+            type="button"
+            onClick={pressMPlus}
+            className="py-2 bg-slate-800/80 hover:bg-slate-755 border border-slate-800/80 text-emerald-400 font-black text-xs rounded-xl active:scale-95 transition-all cursor-pointer shadow-sm uppercase flex items-center justify-center gap-1"
+            title="Memory Add (M+)"
+          >
+            M+
           </button>
         </div>
 
@@ -1234,7 +1841,7 @@ export default function CalculatorModule({
                       }}
                       className={`text-[9px] font-black px-2 py-0.5 rounded transition-all cursor-pointer ${
                         discountType === 'percent'
-                          ? 'bg-emerald-600 text-white shadow-sm'
+                          ? 'bg-emerald-600 text-dark shadow-sm'
                           : 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-705 dark:text-slate-300'
                       }`}
                     >
@@ -1344,7 +1951,7 @@ export default function CalculatorModule({
                 </div>
               )}
 
-              <div className="flex items-center justify-between text-slate-800 dark:text-slate-250">
+              <div className="flex-col items-center justify-between text-slate-800 dark:text-slate-300">
                 <span className="text-xs font-black">
                   {isTaxEnabled 
                     ? (lang === 'hi' ? 'कुल देय राशि' : 'NET PAYABLE TOTAL') 

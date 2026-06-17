@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   History,
   Search,
@@ -13,20 +13,16 @@ import {
   AlertCircle,
   X,
   FileSpreadsheet,
-  HelpCircle
+  HelpCircle,
+  Printer,
+  Check,
+  Square,
+  CheckSquare
 } from 'lucide-react';
 import { Language, HistoryItem, AppSettings } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
-
-interface HistoryModuleProps {
-  lang: Language;
-  settings: AppSettings;
-  history: HistoryItem[];
-  onDeleteItem: (id: string) => void;
-  onClearAll: () => void;
-  onImportHistory?: (items: HistoryItem[], isMerge: boolean) => void;
-}
+import { parseAmountFromHistoryItem } from '../utils/historyHelper';
 
 // Robust, lightweight CSV Parser with semantic type category & timestamp detection
 const handleCSVFileParse = (text: string) => {
@@ -173,6 +169,15 @@ const handleCSVFileParse = (text: string) => {
   return parsedItems;
 };
 
+interface HistoryModuleProps {
+  lang: Language;
+  settings: AppSettings;
+  history: HistoryItem[];
+  onDeleteItem: (id: string) => void;
+  onClearAll: () => void;
+  onImportHistory?: (items: HistoryItem[], isMerge: boolean) => void;
+}
+
 export default function HistoryModule({
   lang,
   settings,
@@ -184,6 +189,50 @@ export default function HistoryModule({
   const t = translate(lang);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'tarazu' | 'converter' | 'calculator' | 'business'>('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  // Item Multiselection / Billing Receipt states
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [showInvoicePreview, setShowInvoicePreview] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [invoiceNo, setInvoiceNo] = useState('');
+  const [showTaxBreakdown, setShowTaxBreakdown] = useState(false);
+
+  // Auto-generate a billing reference whenever we open the preview
+  const handleOpenSelectedInvoice = (items: HistoryItem[]) => {
+    if (items.length === 0) return;
+    setInvoiceNo(`INV-${new Date().getFullYear().toString().slice(-2)}${(Date.now() % 1000000).toString().padStart(6, '0')}`);
+    setShowInvoicePreview(true);
+    playClickSound(settings.soundEnabled);
+  };
+
+  const selectedItems = history.filter(item => selectedItemIds.includes(item.id));
+
+  // Helper inside click handlers
+  const handleCheckboxToggle = (id: string) => {
+    playClickSound(settings.soundEnabled);
+    setSelectedItemIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllFiltered = (filtered: HistoryItem[]) => {
+    playClickSound(settings.soundEnabled);
+    const filteredIds = filtered.map(f => f.id);
+    const allFilteredAreSelected = filteredIds.every(id => selectedItemIds.includes(id));
+    if (allFilteredAreSelected) {
+      // Remove all filtered from selection
+      setSelectedItemIds(prev => prev.filter(id => !filteredIds.includes(id)));
+    } else {
+      // Add all filtered to selection
+      setSelectedItemIds(prev => {
+        const union = new Set([...prev, ...filteredIds]);
+        return Array.from(union);
+      });
+    }
+  };
 
   // Uploader component states
   const [showImportTray, setShowImportTray] = useState(false);
@@ -200,8 +249,42 @@ export default function HistoryModule({
     const matchesSearch =
       item.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.type.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesFilter && matchesSearch;
+    
+    let matchesDate = true;
+    if (startDate) {
+      const startMs = new Date(`${startDate}T00:00:00`).getTime();
+      matchesDate = matchesDate && item.timestamp >= startMs;
+    }
+    if (endDate) {
+      const endMs = new Date(`${endDate}T23:59:59.999`).getTime();
+      matchesDate = matchesDate && item.timestamp <= endMs;
+    }
+    return matchesFilter && matchesSearch && matchesDate;
   });
+
+  const handleQuickPreset = (preset: 'today' | '7days' | '30days' | 'clear') => {
+    playClickSound(settings.soundEnabled);
+    if (preset === 'clear') {
+      setStartDate('');
+      setEndDate('');
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    setEndDate(todayStr);
+
+    if (preset === 'today') {
+      setStartDate(todayStr);
+    } else if (preset === '7days') {
+      const past = new Date();
+      past.setDate(past.getDate() - 7);
+      setStartDate(past.toISOString().split('T')[0]);
+    } else if (preset === '30days') {
+      const past = new Date();
+      past.setDate(past.getDate() - 30);
+      setStartDate(past.toISOString().split('T')[0]);
+    }
+  };
 
   const handleExportCSV = () => {
     playSuccessSound(settings.soundEnabled);
@@ -334,184 +417,267 @@ export default function HistoryModule({
           <p>{successBanner}</p>
         </div>
       )}
-      
-      {/* Search and export actions header */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700/60 shadow-sm">
+
+      {/* Search and export actions header panel */}
+      <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700/60 shadow-sm space-y-4">
         
-        <div className="relative w-full sm:max-w-xs">
-          <span className="absolute inset-y-0 left-3 flex items-center pr-2 text-slate-400">
-            <Search className="w-4 h-4" />
-          </span>
-          <input
-            type="text"
-            placeholder={t('search')}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm font-medium rounded-xl outline-none focus:border-emerald-500 text-slate-850 dark:text-white"
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto relative">
-          {/* Always display import CSV option */}
-          <div className="flex items-center gap-1.5 flex-1 sm:flex-initial relative">
-            <button
-              onClick={() => {
-                playClickSound(settings.soundEnabled);
-                setShowImportTray(!showImportTray);
-              }}
-              className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 border rounded-xl font-bold text-xs transition-all cursor-pointer whitespace-nowrap ${
-                showImportTray
-                  ? 'bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-550/15'
-                  : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              <Upload className="w-4 h-4" />
-              {lang === 'hi' ? 'CSV आयात करें' : 'Import CSV'}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                playClickSound(settings.soundEnabled);
-                setShowHelpPopover(!showHelpPopover);
-              }}
-              className={`p-2.5 border rounded-xl transition-all cursor-pointer flex items-center justify-center ${
-                showHelpPopover
-                  ? 'bg-amber-500 border-amber-500 text-white shadow-md'
-                  : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'
-              }`}
-              title={lang === 'hi' ? 'अपेक्षित कॉलम्स सहायता' : 'Expected CSV Columns Help'}
-            >
-              <HelpCircle className="w-4.5 h-4.5" />
-            </button>
-
-            {/* Custom absolute popover explaining the headers */}
-            {showHelpPopover && (
-              <div className="absolute right-0 top-full mt-2 w-[310px] sm:w-[350px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4.5 rounded-2xl shadow-xl z-50 text-slate-700 dark:text-slate-200 text-xs text-left animate-none">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2 mb-3">
-                  <h5 className="font-extrabold text-xs text-slate-800 dark:text-slate-100 flex items-center gap-1.5 uppercase tracking-wide">
-                    <HelpCircle className="w-4 h-4 text-amber-500" />
-                    {lang === 'hi' ? 'सहमत कॉलम हेडर' : 'Expected CSV Headers'}
-                  </h5>
-                  <button
-                    onClick={() => setShowHelpPopover(false)}
-                    className="p-1 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg cursor-pointer transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5 text-slate-400" />
-                  </button>
-                </div>
-
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3.5 leading-relaxed">
-                  {lang === 'hi'
-                    ? 'सफलतापूर्वक आयात करने के लिए आपकी CSV पहली पंक्ति में नीचे दिए गए नामों का उपयोग कर सकती है:'
-                    : 'To import successfully, ensure your CSV row #1 maps to these standard columns:'}
-                </p>
-
-                <div className="space-y-3">
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between items-center">
-                      <span className="font-mono text-[11px] font-black text-emerald-600 dark:text-emerald-400">
-                        Description / Label *
-                      </span>
-                      <span className="text-[9px] bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-450 px-1.5 py-0.25 rounded font-black uppercase">
-                        {lang === 'hi' ? 'आवश्यक' : 'Required'}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 leading-tight">
-                      {lang === 'hi'
-                        ? 'समर्थित नाम: calculation description, description, label, text, details'
-                        : 'Maps to calculation description, description, label, text, details.'}
-                    </p>
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between items-center">
-                      <span className="font-mono text-[11px] font-black text-slate-700 dark:text-slate-300">
-                        Category / Type
-                      </span>
-                      <span className="text-[9px] bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 px-1.5 py-0.25 rounded font-semibold uppercase">
-                        {lang === 'hi' ? 'वैकल्पिक' : 'Optional'}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 leading-tight">
-                      {lang === 'hi'
-                        ? 'समर्थित: category, type, module. (डिफ़ॉल्ट: स्वतः जाँचा गया)'
-                        : 'Maps to category, type, module (e.g. tarazu, calculator, business, converter).'}
-                    </p>
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between items-center">
-                      <span className="font-mono text-[11px] font-black text-slate-700 dark:text-slate-300">
-                        Date / Timestamp
-                      </span>
-                      <span className="text-[9px] bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 px-1.5 py-0.25 rounded font-semibold uppercase">
-                        {lang === 'hi' ? 'वैकल्पिक' : 'Optional'}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 leading-tight">
-                      {lang === 'hi'
-                        ? 'समर्थित: date, timestamp, time. (डिफ़ॉल्ट: वर्तमान समय)'
-                        : 'Maps to date, timestamp, time (e.g. 2026-05-27 or Unix Timestamp).'}
-                    </p>
-                  </div>
-
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between items-center">
-                      <span className="font-mono text-[11px] font-black text-slate-700 dark:text-slate-300">
-                        ID / Key
-                      </span>
-                      <span className="text-[9px] bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 px-1.5 py-0.25 rounded font-semibold uppercase">
-                        {lang === 'hi' ? 'वैकल्पिक' : 'Optional'}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 leading-tight">
-                      {lang === 'hi'
-                        ? 'समर्थित: id, uuid, key. (डिफ़ॉल्ट: ऑटो जेनरेटेड)'
-                        : 'Maps to id, uuid, key (provides unique row identifier).'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 bg-slate-50 dark:bg-slate-900 p-2 rounded-xl text-[9px] font-mono leading-relaxed text-slate-400 dark:text-slate-500 border border-slate-100 dark:border-slate-750 border-dashed">
-                  <div className="font-semibold text-[10px] mb-1 text-slate-500">
-                    {lang === 'hi' ? 'उदाहरण स्वरूप (उदा. Excel या CSV):' : 'Example CSV Content:'}
-                  </div>
-                  <div className="overflow-x-auto whitespace-nowrap">
-                    ID,Timestamp,Category,Calculation Description<br />
-                    "1","1779951830000","tarazu","Tomato: 5 kg x ₹30 = ₹150"<br />
-                    "2","1779951850000","calculator","100 + 400 = 500"
-                  </div>
-                </div>
-              </div>
+        {/* Row 1: Search input and backup-tool actions */}
+        <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
+          
+          <div className="relative flex-1">
+            <span className="absolute inset-y-0 left-3 flex items-center pr-2 text-slate-400">
+              <Search className="w-4 h-4" />
+            </span>
+            <input
+              type="text"
+              placeholder={lang === 'hi' ? 'बहीखाता प्रविष्टियां खोजें...' : 'Search ledger entries...'}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-10 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm font-medium rounded-xl outline-none focus:border-emerald-500 text-slate-850 dark:text-white"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-rose-500"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
-          {history.length > 0 && (
-            <>
+          <div className="flex flex-wrap gap-2 relative">
+            {/* Always display import CSV option */}
+            <div className="flex items-center gap-1.5 flex-1 md:flex-initial relative">
               <button
-                onClick={handleExportCSV}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950/20 dark:border-emerald-800 dark:text-emerald-300 rounded-xl font-bold text-xs hover:bg-emerald-100 transition-colors cursor-pointer whitespace-nowrap"
+                onClick={() => {
+                  playClickSound(settings.soundEnabled);
+                  setShowImportTray(!showImportTray);
+                }}
+                className={`flex-1 md:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 border rounded-xl font-bold text-xs transition-all cursor-pointer whitespace-nowrap ${
+                  showImportTray
+                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-550/15'
+                    : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
               >
-                <Download className="w-4 h-4" />
-                {t('exportCsv')}
+                <Upload className="w-4 h-4" />
+                {lang === 'hi' ? 'CSV आयात करें' : 'Import CSV'}
               </button>
 
               <button
+                type="button"
                 onClick={() => {
-                  if (confirm(lang === 'hi' ? 'क्या आप बहीखाता की सभी प्रविष्टियों को हटाना चाहते हैं?' : 'Are you sure you want to flush all records?')) {
-                    playClickSound(settings.soundEnabled);
-                    onClearAll();
-                  }
+                  playClickSound(settings.soundEnabled);
+                  setShowHelpPopover(!showHelpPopover);
                 }}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 bg-rose-50 border border-rose-100 text-rose-700 hover:bg-rose-100 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                className={`p-2.5 border rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+                  showHelpPopover
+                    ? 'bg-amber-500 border-amber-500 text-white shadow-md'
+                    : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'
+                }`}
+                title={lang === 'hi' ? 'अपेक्षित कॉलम्स सहायता' : 'Expected CSV Columns Help'}
               >
-                <Trash2 className="w-4 h-4" />
-                {t('clearAll')}
+                <HelpCircle className="w-4.5 h-4.5" />
               </button>
-            </>
-          )}
+
+              {/* Custom absolute popover explaining the headers */}
+              {showHelpPopover && (
+                <div className="absolute right-0 top-full mt-2 w-[310px] sm:w-[350px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4.5 rounded-2xl shadow-xl z-50 text-slate-705 dark:text-slate-200 text-xs text-left animate-none">
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2 mb-3">
+                    <h5 className="font-extrabold text-xs text-slate-800 dark:text-slate-100 flex items-center gap-1.5 uppercase tracking-wide">
+                      <HelpCircle className="w-4 h-4 text-amber-500" />
+                      {lang === 'hi' ? 'सहमत कॉलम हेडर' : 'Expected CSV Headers'}
+                    </h5>
+                    <button
+                      onClick={() => setShowHelpPopover(false)}
+                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg cursor-pointer transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3.5 leading-relaxed">
+                    {lang === 'hi'
+                      ? 'सफलतापूर्वक आयात करने के लिए आपकी CSV पहली पंक्ति में नीचे दिए गए नामों का उपयोग कर सकती है:'
+                      : 'To import successfully, ensure your CSV row #1 maps to these standard columns:'}
+                  </p>
+
+                  <div className="space-y-3">
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+                          Description / Label *
+                        </span>
+                        <span className="text-[9px] bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-450 px-1.5 py-0.25 rounded font-black uppercase">
+                          {lang === 'hi' ? 'आवश्यक' : 'Required'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {lang === 'hi'
+                          ? 'समर्थित नाम: calculation description, description, label, text, details'
+                          : 'Maps to calculation description, description, label, text, details.'}
+                      </p>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono text-[11px] font-black text-slate-700 dark:text-slate-300">
+                          Category / Type
+                        </span>
+                        <span className="text-[9px] bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 px-1.5 py-0.25 rounded font-semibold uppercase">
+                          {lang === 'hi' ? 'वैकल्पिक' : 'Optional'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {lang === 'hi'
+                          ? 'समर्थित: category, type, module. (डिफ़ॉल्ट: स्वतः जाँचा गया)'
+                          : 'Maps to category, type, module (e.g. tarazu, calculator, business, converter).'}
+                      </p>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono text-[11px] font-black text-slate-700 dark:text-slate-300">
+                          Date / Timestamp
+                        </span>
+                        <span className="text-[9px] bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 px-1.5 py-0.25 rounded font-semibold uppercase">
+                          {lang === 'hi' ? 'वैकल्पिक' : 'Optional'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {lang === 'hi'
+                          ? 'समर्थित: date, timestamp, time. (डिफ़ॉल्ट: वर्तमान समय)'
+                          : 'Maps to date, timestamp, time (e.g. 2026-05-27 or Unix Timestamp).'}
+                      </p>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono text-[11px] font-black text-slate-700 dark:text-slate-300">
+                          ID / Key
+                        </span>
+                        <span className="text-[9px] bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 px-1.5 py-0.25 rounded font-semibold uppercase">
+                          {lang === 'hi' ? 'वैकल्पिक' : 'Optional'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {lang === 'hi'
+                          ? 'समर्थित: id, uuid, key. (डिफ़ॉल्ट: ऑटो जेनरेटेड)'
+                          : 'Maps to id, uuid, key (provides unique row identifier).'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 bg-slate-50 dark:bg-slate-900 p-2 rounded-xl text-[9px] font-mono leading-relaxed text-slate-400 dark:text-slate-500 border border-slate-100 dark:border-slate-750 border-dashed">
+                    <div className="font-semibold text-[10px] mb-1 text-slate-500">
+                      {lang === 'hi' ? 'उदाहरण स्वरूप (उदा. Excel या CSV):' : 'Example CSV Content:'}
+                    </div>
+                    <div className="overflow-x-auto whitespace-nowrap">
+                      ID,Timestamp,Category,Calculation Description<br />
+                      "1","1779951830000","tarazu","Tomato: 5 kg x ₹30 = ₹150"<br />
+                      "2","1779951850000","calculator","100 + 400 = 500"
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {history.length > 0 && (
+              <>
+                <button
+                  onClick={handleExportCSV}
+                  className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950/20 dark:border-emerald-800 dark:text-emerald-300 rounded-xl font-bold text-xs hover:bg-emerald-100 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Download className="w-4 h-4" />
+                  {t('exportCsv')}
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (confirm(lang === 'hi' ? 'क्या आप बहीखाता की सभी प्रविष्टियों को हटाना चाहते हैं?' : 'Are you sure you want to flush all records?')) {
+                      playClickSound(settings.soundEnabled);
+                      onClearAll();
+                    }
+                  }}
+                  className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 bg-rose-50 border border-rose-100 text-rose-700 hover:bg-rose-100 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {t('clearAll')}
+                </button>
+              </>
+            )}
+          </div>
+
         </div>
+
+        {/* Row 2: Date Pickers and Quick Presets */}
+        <div className="pt-3.5 border-t border-slate-100 dark:border-slate-700/60 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+          
+          <div className="flex-1 grid grid-cols-2 gap-2">
+            
+            {/* Start Date */}
+            <div className="relative">
+              <span className="absolute inset-y-0 left-2.5 flex items-center pr-1 text-slate-400 pointer-events-none">
+                <Calendar className="w-3.5 h-3.5" />
+              </span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full pl-8 pr-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] font-semibold rounded-lg outline-none focus:border-emerald-500 text-slate-700 dark:text-slate-350 cursor-pointer"
+                title={lang === 'hi' ? 'प्रारंभ तिथि' : 'Start Date'}
+              />
+            </div>
+
+            {/* End Date */}
+            <div className="relative">
+              <span className="absolute inset-y-0 left-2.5 flex items-center pr-1 text-slate-400 pointer-events-none">
+                <Calendar className="w-3.5 h-3.5" />
+              </span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full pl-8 pr-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] font-semibold rounded-lg outline-none focus:border-emerald-500 text-slate-700 dark:text-slate-350 cursor-pointer"
+                title={lang === 'hi' ? 'अंतिम तिथि' : 'End Date'}
+              />
+            </div>
+
+          </div>
+
+          {/* Presets and clear helpers */}
+          <div className="flex flex-wrap gap-1.5 items-center justify-start sm:justify-end">
+            <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 dark:text-slate-500 hidden md:inline">
+              {lang === 'hi' ? 'त्वरित फ़िल्टर:' : 'Quick Filters:'}
+            </span>
+            
+            {[
+              { id: 'today', label: lang === 'hi' ? 'आज' : 'Today' },
+              { id: '7days', label: lang === 'hi' ? '७ दिन' : '7 Days' },
+              { id: '30days', label: lang === 'hi' ? '३० दिन' : '30 Days' },
+            ].map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => handleQuickPreset(preset.id as any)}
+                className="px-2 py-1 bg-slate-50 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-800/80 text-[10px] font-bold text-slate-600 dark:text-slate-450 rounded-lg cursor-pointer transition-colors hover:text-emerald-500"
+              >
+                {preset.label}
+              </button>
+            ))}
+
+            {(startDate || endDate) && (
+              <button
+                type="button"
+                onClick={() => handleQuickPreset('clear')}
+                className="px-2 py-1 bg-rose-50 hover:bg-rose-100 dark:bg-rose-955 text-rose-600 dark:text-rose-450 border border-rose-200/30 text-[10px] font-black rounded-lg cursor-pointer transition-colors"
+              >
+                {lang === 'hi' ? 'साफ़ करें' : 'Clear Dates'}
+              </button>
+            )}
+          </div>
+
+        </div>
+
       </div>
 
       {/* COLLAPSIBLE UPLOAD TRAY & DRAGZONE */}
@@ -668,8 +834,58 @@ export default function HistoryModule({
         ))}
       </div>
 
+      {/* Multiselection contextual action ribbon */}
+      {filteredHistory.length > 0 && (
+        <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/80 p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs select-none">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => handleSelectAllFiltered(filteredHistory)}
+              className="flex items-center gap-2 font-bold text-slate-750 dark:text-slate-350 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer transition-colors"
+            >
+              {filteredHistory.every(item => selectedItemIds.includes(item.id)) ? (
+                <CheckSquare className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              ) : (
+                <Square className="w-5 h-5 text-slate-300 dark:text-slate-600 shrink-0" />
+              )}
+              <span>{lang === 'hi' ? 'सभी फ़िल्टर चुनें' : 'Select All Filtered'}</span>
+            </button>
+
+            {selectedItemIds.length > 0 && (
+              <span className="font-extrabold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-500/20 px-3 py-1 rounded-xl">
+                {lang === 'hi' 
+                  ? `${selectedItemIds.length} चयनित` 
+                  : `${selectedItemIds.length} Selected`}
+              </span>
+            )}
+          </div>
+
+          {selectedItemIds.length > 0 && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleOpenSelectedInvoice(selectedItems)}
+                className="flex-grow sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl shadow-md cursor-pointer transition-all active:scale-95 text-xs-heading"
+              >
+                <Printer className="w-4 h-4" />
+                <span>{lang === 'hi' ? 'चयनित बिल प्रिंट करें' : 'Print Invoice'}</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  playClickSound(settings.soundEnabled);
+                  setSelectedItemIds([]);
+                }}
+                className="p-2 bg-white hover:bg-slate-50 dark:bg-slate-805 dark:hover:bg-slate-750 text-slate-505 dark:text-slate-405 rounded-xl border border-slate-205 dark:border-slate-705 transition-all cursor-pointer"
+                title={lang === 'hi' ? 'चयन रद्द करें' : 'Clear Selection'}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Ledger Body items */}
-      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/60 rounded-3xl p-6 shadow-sm">
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/60 rounded-3xl p-6 shadow-sm mr-0">
         
         {filteredHistory.length === 0 ? (
           <div className="text-center py-16 text-slate-400 flex flex-col items-center justify-center gap-4">
@@ -682,14 +898,29 @@ export default function HistoryModule({
               const dateObj = new Date(item.timestamp);
               const formattedDate = dateObj.toLocaleDateString();
               const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const isSelected = selectedItemIds.includes(item.id);
 
               return (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between py-4 first:pt-0 last:pb-0 gap-4 transition-colors"
+                  className={`flex items-center justify-between py-4 first:pt-0 last:pb-0 gap-4 transition-all rounded-2xl px-2 -mx-2 ${
+                    isSelected ? 'bg-emerald-500/5 dark:bg-emerald-500/10' : 'hover:bg-slate-50/50 dark:hover:bg-slate-900/10'
+                  }`}
                 >
-                  <div className="flex items-start gap-3.5 min-w-0">
-                    <span className="text-xl bg-slate-50 dark:bg-slate-900 border p-2.5 rounded-xl block shadow-sm">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    {/* Checkbox button box */}
+                    <button
+                      onClick={() => handleCheckboxToggle(item.id)}
+                      className="mt-2.5 text-slate-400 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      ) : (
+                        <Square className="w-5 h-5 text-slate-300 dark:text-slate-750 shrink-0" />
+                      )}
+                    </button>
+
+                    <span className="text-xl bg-slate-50 dark:bg-slate-900 border p-2.5 rounded-xl block shadow-sm shrink-0">
                       {item.type === 'tarazu' ? '⚖️' : item.type === 'converter' ? '🔄' : item.type === 'calculator' ? '🧮' : '📊'}
                     </span>
                     <div className="min-w-0">
@@ -707,22 +938,283 @@ export default function HistoryModule({
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      playClickSound(settings.soundEnabled);
-                      onDeleteItem(item.id);
-                    }}
-                    className="p-2 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-xl transition-colors shrink-0 cursor-pointer"
-                    title={t('delete')}
-                  >
-                    ✕
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0 select-none">
+                    <button
+                      onClick={() => {
+                        // Open invoice just for this specific item
+                        setSelectedItemIds([item.id]);
+                        handleOpenSelectedInvoice([item]);
+                      }}
+                      className="p-2 text-slate-450 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 rounded-xl transition-all cursor-pointer"
+                      title={lang === 'hi' ? 'रसीद प्रिंट' : 'Print Receipt'}
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        playClickSound(settings.soundEnabled);
+                        onDeleteItem(item.id);
+                        // Also remove from selection if deleted
+                        setSelectedItemIds(prev => prev.filter(id => id !== item.id));
+                      }}
+                      className="p-2 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-xl transition-all shrink-0 cursor-pointer"
+                      title={t('delete')}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* PRINT INVOICE PREVIEW MODAL */}
+      {showInvoicePreview && selectedItems.length > 0 && (
+        <div className="fixed inset-0 bg-slate-905/75 backdrop-blur-sm z-50 overflow-y-auto flex items-center justify-center p-4">
+          <div className="bg-white text-slate-900 w-full max-w-2xl rounded-3xl shadow-2xl p-6 md:p-8 space-y-6 relative border border-slate-100">
+            
+            {/* Modal Heading - Hidden during physical window.print() */}
+            <div className="flex items-center justify-between border-b pb-4 print:hidden">
+              <div className="flex items-center gap-2 text-slate-800">
+                <Printer className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-black text-sm uppercase tracking-wide">
+                  {lang === 'hi' ? 'बिल प्रिंट पूर्वदर्शन' : 'Invoice Print Preview'}
+                </h3>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowTaxBreakdown(!showTaxBreakdown)}
+                  className={`px-3 py-1.5 rounded-xl border text-[11px] font-extrabold transition-all cursor-pointer ${
+                    showTaxBreakdown
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {showTaxBreakdown
+                    ? (lang === 'hi' ? 'GST विवरण छिपाएं' : 'Hide GST Split')
+                    : (lang === 'hi' ? '18% GST विवरण जोड़ें' : 'Apply 18% GST Split')}
+                </button>
+                <button
+                  onClick={() => setShowInvoicePreview(false)}
+                  className="p-1.5 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5 text-slate-400" />
+                </button>
+              </div>
+            </div>
+
+            {/* PRINT-ONLY AREA WITH ID */}
+            <div id="invoice-print-area" className="bg-white text-black p-4 space-y-6 font-sans">
+              
+              {/* Invoice Header details */}
+              <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b-2 border-black pb-5">
+                <div className="space-y-1.5 text-left select-none">
+                  {/* Shop Information */}
+                  <h1 className="text-xl font-black uppercase tracking-tight text-black">
+                    {settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store')}
+                  </h1>
+                  {settings.shopPhone && (
+                    <p className="text-xs font-semibold text-black flex items-center gap-1">
+                      <span>📱 {lang === 'hi' ? 'दूरभाष:' : 'Phone:'}</span> {settings.shopPhone}
+                    </p>
+                  )}
+                  {settings.shopGst && (
+                    <p className="text-xs font-bold text-black flex items-center gap-1">
+                      <span>🧾 {lang === 'hi' ? 'जीएसटीआईएन (GSTIN):' : 'GSTIN:'}</span> {settings.shopGst}
+                    </p>
+                  )}
+                </div>
+
+                <div className="text-right sm:text-right space-y-1 self-stretch sm:self-start">
+                  <div className="text-xs font-bold text-black">
+                    <span className="uppercase">{lang === 'hi' ? 'बिल संख्या:' : 'Bill No:'}</span>
+                    <span className="font-mono ml-1">{invoiceNo}</span>
+                  </div>
+                  <div className="text-xs text-black">
+                    <span className="font-bold">{lang === 'hi' ? 'तिथि:' : 'Date:'}</span>
+                    <span className="ml-1 font-mono">{new Date().toLocaleDateString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric'
+                    })}</span>
+                  </div>
+                  <div className="text-xs text-black font-semibold">
+                    <span>{lang === 'hi' ? 'समय:' : 'Time:'}</span>
+                    <span className="ml-1 font-mono">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Editable Billing Inputs - Hides values borders during window.print() */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border print:border-none print:p-0 print:bg-transparent">
+                <div className="text-left">
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 print:hidden select-none">
+                    {lang === 'hi' ? 'ग्राहक का नाम' : 'Customer Name'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={lang === 'hi' ? 'उदा. राजेश कुमार' : 'e.g. Rajesh Kumar'}
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    className="w-full text-xs font-extrabold capitalize text-black bg-transparent border-b border-transparent focus:border-emerald-600 outline-none pb-0.5 print:hidden mt-1"
+                  />
+                  <div className="hidden print:block text-xs text-black font-semibold">
+                    <span className="text-[11px] font-black">{lang === 'hi' ? 'ग्राहक:' : 'Customer:'}</span> {customerName || (lang === 'hi' ? 'नकद ग्राहक' : 'Cash Customer')}
+                  </div>
+                </div>
+
+                <div className="text-left">
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 print:hidden select-none">
+                    {lang === 'hi' ? 'मोबाइल नंबर (वैकल्पिक)' : 'Mobile Number (Optional)'}
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder={lang === 'hi' ? 'उदा. +91 98765 43210' : 'e.g. +91 98765 43210'}
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    className="w-full text-xs font-mono font-bold text-black bg-transparent border-b border-transparent focus:border-emerald-600 outline-none pb-0.5 print:hidden mt-1"
+                  />
+                  {customerPhone && (
+                    <div className="hidden print:block text-xs text-black font-semibold mt-1">
+                      <span className="text-[11px] font-black">{lang === 'hi' ? 'मोब:' : 'Mob:'}</span> {customerPhone}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Itemized Calculations table structured cleanly for thermal/A4 printing */}
+              <div className="border border-black overflow-hidden rounded-lg">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-black text-white uppercase text-[10px] tracking-wider border-b border-black">
+                      <th className="py-2.5 px-3 text-center w-12 font-black">#</th>
+                      <th className="py-2.5 px-3 font-black">{lang === 'hi' ? 'विवरण' : 'Particulars'}</th>
+                      <th className="py-2.5 px-3 text-right w-28 font-black">{lang === 'hi' ? 'राशि' : 'Amount'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedItems.map((item, idx) => {
+                      const amount = parseAmountFromHistoryItem(item, settings.preferredCurrency);
+                      const displayAmt = amount > 0 
+                        ? `${settings.preferredCurrency} ${amount.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                        : '—';
+
+                      return (
+                        <tr key={item.id} className="border-b border-black/10 last:border-b-0">
+                          <td className="py-3 px-3 text-center font-mono font-bold">{idx + 1}</td>
+                          <td className="py-3 px-3 font-sans text-left">
+                            <div className="font-extrabold uppercase text-[11px] text-black">
+                              {item.type === 'tarazu' ? (lang === 'hi' ? 'तराजू मापन' : 'Weighment Scale') : item.type.toUpperCase()}
+                            </div>
+                            <div className="text-[10px] text-slate-705 leading-relaxed font-semibold">{item.label}</div>
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono font-extrabold text-black">
+                            {displayAmt}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Totals & Tax Amortization block */}
+              <div className="flex justify-end pt-2">
+                <div className="w-full sm:w-72 space-y-1.5">
+                  
+                  {showTaxBreakdown ? (() => {
+                    const totalAmt = selectedItems.reduce((acc, current) => acc + parseAmountFromHistoryItem(current, settings.preferredCurrency), 0);
+                    // GST 18% inclusive reverse calculation
+                    const taxableVal = totalAmt / 1.18;
+                    const cGst = (totalAmt - taxableVal) / 2;
+                    const sGst = cGst;
+
+                    return (
+                      <div className="text-xs space-y-1 divide-y divide-black/5 font-semibold text-black">
+                        <div className="flex justify-between py-1">
+                          <span>{lang === 'hi' ? 'कर योग्य मूल्य (Taxable Amt):' : 'Taxable Amt:'}</span>
+                          <span className="font-mono">{settings.preferredCurrency} {taxableVal.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="flex justify-between py-1">
+                          <span>{lang === 'hi' ? 'CGST (9.0%):' : 'CGST (9.0%):'}</span>
+                          <span className="font-mono">{settings.preferredCurrency} {cGst.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="flex justify-between py-1">
+                          <span>{lang === 'hi' ? 'SGST (9.0%):' : 'SGST (9.0%):'}</span>
+                          <span className="font-mono">{settings.preferredCurrency} {sGst.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="flex justify-between py-2 border-t-2 border-black text-sm font-black">
+                          <span>{lang === 'hi' ? 'कुल राशि (GRAND TOTAL):' : 'GRAND TOTAL:'}</span>
+                          <span className="font-mono">{settings.preferredCurrency} {totalAmt.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                    );
+                  })() : (() => {
+                    const totalAmt = selectedItems.reduce((acc, current) => acc + parseAmountFromHistoryItem(current, settings.preferredCurrency), 0);
+
+                    return (
+                      <div className="text-xs space-y-1 font-semibold text-black">
+                        <div className="flex justify-between py-2 border-t-2 border-black text-sm font-black">
+                          <span>{lang === 'hi' ? 'कुल राशि (GRAND TOTAL):' : 'GRAND TOTAL:'}</span>
+                          <span className="font-mono">{settings.preferredCurrency} {totalAmt.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                </div>
+              </div>
+
+              {/* Legal and thank you block */}
+              <div className="pt-8 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-6 border-t border-black/10 select-none">
+                <div className="space-y-1 text-left">
+                  <p className="text-[10px] font-black uppercase text-black">
+                    {lang === 'hi' ? 'धन्यवाद! कृपया पुनः पधारें।' : 'Thank you! Visit again.'}
+                  </p>
+                  <p className="text-[9px] text-slate-500 font-bold">
+                    {lang === 'hi' ? 'यह बिल तराजू (PWA) एप्प द्वारा जारी है।' : 'Generated electronically via Tarazu App.'}
+                  </p>
+                </div>
+                
+                <div className="w-44 text-center border-t border-black pt-2 self-stretch sm:self-auto">
+                  <p className="text-[9px] font-black uppercase text-black">
+                    {lang === 'hi' ? 'अधिकृत हस्ताक्षरी' : 'Authorized Signatory'}
+                  </p>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Print Confirmation Footer - Hidden during window.print() */}
+            <div className="grid grid-cols-2 gap-3 pt-4 border-t print:hidden select-none">
+              <button
+                type="button"
+                onClick={() => {
+                  playClickSound(settings.soundEnabled);
+                  window.print();
+                }}
+                className="py-3 bg-black hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition-all outline-none cursor-pointer active:scale-95 shadow-lg shadow-black/10 text-center uppercase tracking-wider cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>{lang === 'hi' ? 'प्रिंट करें' : 'Print Now'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowInvoicePreview(false)}
+                className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-850 font-bold text-xs rounded-xl transition-all outline-none border border-slate-200 cursor-pointer active:scale-95 text-center uppercase tracking-wider cursor-pointer"
+              >
+                {lang === 'hi' ? 'बंद करें' : 'Close Preview'}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

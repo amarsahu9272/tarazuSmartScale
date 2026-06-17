@@ -8,6 +8,8 @@ export interface AppSettings {
   shopName: string;
   shopPhone: string;
   shopGst: string;
+  preferredCurrency: string;
+  batterySaver?: boolean;
 }
 
 export type HistoryItem =

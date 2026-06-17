@@ -26,6 +26,19 @@ export default function SettingsModule({
   const [soundEnabled, setSoundEnabled] = useState(settings.soundEnabled);
   const [decimalPrecision, setDecimalPrecision] = useState<number>(settings.decimalPrecision);
   const [darkMode, setDarkMode] = useState(settings.darkMode);
+  const [preferredCurrency, setPreferredCurrency] = useState(settings.preferredCurrency || '₹');
+  const [batterySaver, setBatterySaver] = useState(settings.batterySaver || false);
+
+  React.useEffect(() => {
+    setShopName(settings.shopName);
+    setShopPhone(settings.shopPhone);
+    setShopGst(settings.shopGst);
+    setSoundEnabled(settings.soundEnabled);
+    setDecimalPrecision(settings.decimalPrecision);
+    setDarkMode(settings.darkMode);
+    setPreferredCurrency(settings.preferredCurrency || '₹');
+    setBatterySaver(settings.batterySaver || false);
+  }, [settings]);
 
   const [savingFlashing, setSavingFlashing] = useState(false);
 
@@ -42,6 +55,8 @@ export default function SettingsModule({
       shopName,
       shopPhone,
       shopGst,
+      preferredCurrency,
+      batterySaver,
     });
 
     setTimeout(() => setSavingFlashing(false), 2000);
@@ -62,6 +77,15 @@ export default function SettingsModule({
     onUpdateSettings({
       ...settings,
       soundEnabled: checked,
+    });
+  };
+
+  const handleToggleBatterySaver = (checked: boolean) => {
+    playClickSound(soundEnabled);
+    setBatterySaver(checked);
+    onUpdateSettings({
+      ...settings,
+      batterySaver: checked,
     });
   };
 
@@ -232,6 +256,23 @@ export default function SettingsModule({
           </label>
         </div>
 
+        {/* Battery Saver toggle */}
+        <div className="flex justify-between items-center py-2 border-t border-slate-100 dark:border-slate-850">
+          <div className="max-w-[70%] text-left">
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">{t('batterySaverMode')}</p>
+            <p className="text-xs text-slate-400 leading-relaxed">{t('batterySaverDesc')}</p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={batterySaver}
+              onChange={(e) => handleToggleBatterySaver(e.target.checked)}
+            />
+            <div className="w-11 h-6 bg-slate-200 dark:bg-slate-950/60 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+          </label>
+        </div>
+
         {/* Decimal Selector */}
         <div className="flex justify-between items-center py-2 border-t border-slate-100 dark:border-slate-850">
           <div>
@@ -246,13 +287,68 @@ export default function SettingsModule({
               playClickSound(soundEnabled);
               onUpdateSettings({ ...settings, decimalPrecision: val });
             }}
-            className="p-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-bold text-xs rounded-xl"
+            className="p-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-bold text-xs rounded-xl text-slate-800 dark:text-slate-200 cursor-pointer"
           >
             <option value="1">1 Place (.0)</option>
             <option value="2">2 Places (.00)</option>
             <option value="3">3 Places (.000)</option>
             <option value="4">4 Places (.0000)</option>
           </select>
+        </div>
+
+        {/* Preferred Currency Selector */}
+        <div className="flex justify-between items-center py-2 border-t border-slate-100 dark:border-slate-850">
+          <div>
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+              {lang === 'hi' ? 'पसंदीदा मुद्रा' : 'Preferred Currency'}
+            </p>
+            <p className="text-xs text-slate-400">
+              {lang === 'hi' ? 'सभी मूल्य स्क्रीन और रसीद पर प्रदर्शित होने वाला प्रतीक' : 'Symbol displayed on all price screens and receipts'}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <select
+              value={['₹', '$', '€', '£', '¥', '৳', 'Rp', 'AED', 'đ'].includes(preferredCurrency) ? preferredCurrency : 'other'}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === 'other') {
+                  setPreferredCurrency('');
+                  onUpdateSettings({ ...settings, preferredCurrency: '' });
+                } else {
+                  setPreferredCurrency(val);
+                  onUpdateSettings({ ...settings, preferredCurrency: val });
+                }
+                playClickSound(soundEnabled);
+              }}
+              className="p-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-bold text-xs rounded-xl text-slate-800 dark:text-slate-200 cursor-pointer"
+            >
+              <option value="₹">Rupee (₹)</option>
+              <option value="$">Dollar ($)</option>
+              <option value="€">Euro (€)</option>
+              <option value="£">Pound (£)</option>
+              <option value="¥">Yen/Yuan (¥)</option>
+              <option value="৳">Taka (৳)</option>
+              <option value="Rp">Rupiah (Rp)</option>
+              <option value="AED">Dirham (AED)</option>
+              <option value="đ">Dong (đ)</option>
+              <option value="other">Custom...</option>
+            </select>
+            {(!['₹', '$', '€', '£', '¥', '৳', 'Rp', 'AED', 'đ'].includes(preferredCurrency) || preferredCurrency === '') && (
+              <input
+                type="text"
+                maxLength={5}
+                className="w-14 p-1.5 text-center bg-slate-50 dark:bg-slate-900 border border-slate-250 dark:border-slate-800 font-black text-xs rounded-xl text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 outline-none focus:ring-1 focus:ring-emerald-500/50"
+                value={preferredCurrency}
+                placeholder="Sym"
+                title="Enter custom currency symbol"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setPreferredCurrency(val);
+                  onUpdateSettings({ ...settings, preferredCurrency: val });
+                }}
+              />
+            )}
+          </div>
         </div>
 
         {/* Full App Backup */}

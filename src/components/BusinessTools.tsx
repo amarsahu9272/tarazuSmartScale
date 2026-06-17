@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { DollarSign, Percent, TrendingUp, Calculator, Calendar, Landmark, CheckCircle, FileCheck } from 'lucide-react';
+import { DollarSign, Percent, TrendingUp, Calculator, Calendar, Landmark, CheckCircle, FileCheck, Layers, Trash2, Plus, Minus, ArrowRight, Sparkles, Scale, Import } from 'lucide-react';
 import { Language, HistoryItem, AppSettings, HistoryItemInput } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
@@ -7,18 +7,40 @@ import { playClickSound, playSuccessSound } from '../utils/audio';
 interface BusinessToolsProps {
   lang: Language;
   settings: AppSettings;
+  history?: HistoryItem[];
   onAddHistoryItem: (item: HistoryItemInput) => void;
 }
 
 export default function BusinessTools({
   lang,
   settings,
+  history = [],
   onAddHistoryItem,
 }: BusinessToolsProps) {
   const t = translate(lang);
 
-  // Tabs: 'profit_loss' | 'gst_splitter' | 'loan_emi'
-  const [activeTab, setActiveTab] = useState<'profit_loss' | 'gst_splitter' | 'loan_emi'>('profit_loss');
+  // Tabs: 'profit_loss' | 'gst_splitter' | 'loan_emi' | 'bulk_batch'
+  const [activeTab, setActiveTab] = useState<'profit_loss' | 'gst_splitter' | 'loan_emi' | 'bulk_batch'>('profit_loss');
+
+  // Bulk Batch Calculator States
+  const [batchList, setBatchList] = useState<{
+    id: string;
+    name: string;
+    originalRate: number;
+    originalWeight: number;
+    originalTotal: number;
+  }[]>([]);
+
+  // Manual Item Inputs
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemRate, setNewItemRate] = useState('40');
+  const [newItemWeight, setNewItemWeight] = useState('2.5');
+
+  // Modifier Parameters
+  const [rateModType, setRateModType] = useState<'none' | 'percent_add' | 'percent_sub' | 'factor' | 'flat_add' | 'flat_sub'>('none');
+  const [rateModValue, setRateModValue] = useState('10');
+  const [weightModType, setWeightModType] = useState<'none' | 'percent_add' | 'percent_sub' | 'factor' | 'flat_add' | 'flat_sub'>('none');
+  const [weightModValue, setWeightModValue] = useState('5');
 
   // Profit/Loss States
   const [buyingPrice, setBuyingPrice] = useState('800');
@@ -107,6 +129,57 @@ export default function BusinessTools({
     };
   })();
 
+  // Batch calculations
+  const modifiedBatch = batchList.map(item => {
+    let modifiedRate = item.originalRate;
+    let modifiedWeight = item.originalWeight;
+
+    // Apply rate modification
+    const rVal = parseFloat(rateModValue) || 0;
+    if (rateModType === 'percent_add') {
+      modifiedRate = item.originalRate * (1 + rVal / 100);
+    } else if (rateModType === 'percent_sub') {
+      modifiedRate = item.originalRate * (1 - rVal / 100);
+    } else if (rateModType === 'factor') {
+      modifiedRate = item.originalRate * rVal;
+    } else if (rateModType === 'flat_add') {
+      modifiedRate = item.originalRate + rVal;
+    } else if (rateModType === 'flat_sub') {
+      modifiedRate = item.originalRate - rVal;
+    }
+
+    // Apply weight modification
+    const wVal = parseFloat(weightModValue) || 0;
+    if (weightModType === 'percent_add') {
+      modifiedWeight = item.originalWeight * (1 + wVal / 100);
+    } else if (weightModType === 'percent_sub') {
+      modifiedWeight = item.originalWeight * (1 - wVal / 100);
+    } else if (weightModType === 'factor') {
+      modifiedWeight = item.originalWeight * wVal;
+    } else if (weightModType === 'flat_add') {
+      modifiedWeight = item.originalWeight + wVal;
+    } else if (weightModType === 'flat_sub') {
+      modifiedWeight = Math.max(0, item.originalWeight - wVal);
+    }
+
+    // Rounding
+    modifiedRate = Math.max(0, Number(modifiedRate.toFixed(settings.decimalPrecision)));
+    modifiedWeight = Math.max(0, Number(modifiedWeight.toFixed(4)));
+    const modifiedTotal = Number((modifiedRate * modifiedWeight).toFixed(settings.decimalPrecision));
+
+    return {
+      ...item,
+      modifiedRate,
+      modifiedWeight,
+      modifiedTotal,
+    };
+  });
+
+  const batchOriginalPriceTotal = batchList.reduce((acc, curr) => acc + curr.originalTotal, 0);
+  const batchOriginalWeightTotal = batchList.reduce((acc, curr) => acc + curr.originalWeight, 0);
+  const batchModifiedPriceTotal = modifiedBatch.reduce((acc, curr) => acc + curr.modifiedTotal, 0);
+  const batchModifiedWeightTotal = modifiedBatch.reduce((acc, curr) => acc + curr.modifiedWeight, 0);
+
   const handleSaveToLedger = () => {
     playSuccessSound(settings.soundEnabled);
 
@@ -129,7 +202,7 @@ export default function BusinessTools({
         outputs: { baseAmount: gstAudit.base, cgst: gstAudit.cgst, sgst: gstAudit.sgst, totalBill: gstAudit.total },
         label: `${gstDirection === 'add' ? '+' : '-'}${gstRate}% GST Splitter on ₹${gstAmount} → CGST: ₹${gstAudit.cgst.toFixed(2)}, SGST: ₹${gstAudit.sgst.toFixed(2)}`,
       });
-    } else {
+    } else if (activeTab === 'loan_emi') {
       const emiVal = emiAudit.emi.toFixed(settings.decimalPrecision);
       onAddHistoryItem({
         type: 'business',
@@ -138,17 +211,42 @@ export default function BusinessTools({
         outputs: { monthlyEmi: emiAudit.emi, totalInterest: emiAudit.interest, totalPayable: emiAudit.payable },
         label: `Capital Loan: ₹${loanPrincipal} (${loanRate}% p.a.) → Monthly EMI: ₹${emiVal} x ${emiAudit.monthsCount} months`,
       });
+    } else if (activeTab === 'bulk_batch') {
+      const originalTotalStr = batchOriginalPriceTotal.toFixed(settings.decimalPrecision);
+      const modifiedTotalStr = batchModifiedPriceTotal.toFixed(settings.decimalPrecision);
+      const itemsCount = batchList.length;
+      
+      onAddHistoryItem({
+        type: 'business',
+        tool: 'profit',
+        inputs: {
+          itemsCount,
+          rateModType,
+          rateModValue,
+          weightModType,
+          weightModValue,
+        },
+        outputs: {
+          originalTotal: batchOriginalPriceTotal,
+          modifiedTotal: batchModifiedPriceTotal,
+          diff: batchModifiedPriceTotal - batchOriginalPriceTotal,
+        },
+        label: lang === 'hi'
+          ? `थोक बैच संशोधन (${itemsCount} सामान): ₹${originalTotalStr} ➔ ₹${modifiedTotalStr} (अंतर: ${batchModifiedPriceTotal >= batchOriginalPriceTotal ? '+' : ''}₹${(batchModifiedPriceTotal - batchOriginalPriceTotal).toFixed(settings.decimalPrecision)})`
+          : `Bulk Batch Modification (${itemsCount} items): ₹${originalTotalStr} ➔ ₹${modifiedTotalStr} (Diff: ${batchModifiedPriceTotal >= batchOriginalPriceTotal ? '+' : ''}₹${(batchModifiedPriceTotal - batchOriginalPriceTotal).toFixed(settings.decimalPrecision)})`,
+      });
     }
   };
 
   return (
     <div className="space-y-6">
       {/* Visual Header Grid tabs for selection */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { id: 'profit_loss', label: t('profitCalc'), icon: <TrendingUp className="w-5 h-5" /> },
           { id: 'gst_splitter', label: t('gstCalc'), icon: <Calculator className="w-5 h-5" /> },
           { id: 'loan_emi', label: t('emiCalc'), icon: <Landmark className="w-5 h-5" /> },
+          { id: 'bulk_batch', label: lang === 'hi' ? 'थोक बैच (Bulk)' : 'Bulk Batch', icon: <Layers className="w-5 h-5" /> },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -273,7 +371,7 @@ export default function BusinessTools({
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">{t('loanAmount')}</label>
                 <div className="flex rounded-xl border overflow-hidden shadow-sm">
-                  <span className="bg-slate-50 border-r text-slate-500 font-bold px-3 py-2">₹</span>
+                  <span className="bg-slate-50 border-r text-slate-500 font-bold px-3 py-2">{settings.preferredCurrency || '₹'}</span>
                   <input
                     type="number"
                     value={loanPrincipal}
@@ -318,6 +416,164 @@ export default function BusinessTools({
             </div>
           )}
 
+          {activeTab === 'bulk_batch' && (
+            <div className="space-y-4">
+              {/* Rate Modification Card */}
+              <div className="p-3.5 bg-indigo-50/50 dark:bg-slate-900/60 border border-indigo-100/60 dark:border-slate-800 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-1.5">
+                  <span className="text-xs font-black uppercase text-indigo-700 dark:text-indigo-400 tracking-wider flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-indigo-500" />
+                    {lang === 'hi' ? 'मूल्य/दर संशोधन' : 'Rate Modifier'}
+                  </span>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold uppercase text-slate-400">{lang === 'hi' ? 'संशोधन प्रकार' : 'Modification Type'}</label>
+                  <select
+                    value={rateModType}
+                    onChange={(e) => {
+                      playClickSound(settings.soundEnabled);
+                      setRateModType(e.target.value as any);
+                    }}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-black text-slate-705 dark:text-slate-350 outline-none"
+                  >
+                    <option value="none">{lang === 'hi' ? 'कोई परिवर्तन नहीं' : 'None (Keep Original)'}</option>
+                    <option value="percent_add">{lang === 'hi' ? 'प्रतिशत (%) जोड़ें (मार्कअप/कर)' : 'Add % (Markup/Tax)'}</option>
+                    <option value="percent_sub">{lang === 'hi' ? 'प्रतिशत (%) घटाएं (छूट)' : 'Subtract % (Discount)'}</option>
+                    <option value="factor">{lang === 'hi' ? 'कारक से गुणा करें (X)' : 'Multiply by Factor'}</option>
+                    <option value="flat_add">{lang === 'hi' ? `फ्लैट दर जोड़ें (+${settings.preferredCurrency || '₹'})` : `Add Flat Rate (+${settings.preferredCurrency || '₹'})`}</option>
+                    <option value="flat_sub">{lang === 'hi' ? `फ्लैट दर घटाएं (-${settings.preferredCurrency || '₹'})` : `Subtract Flat Rate (-${settings.preferredCurrency || '₹'})`}</option>
+                  </select>
+                </div>
+
+                {rateModType !== 'none' && (
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                      {rateModType.startsWith('percent') ? (lang === 'hi' ? 'प्रतिशत मूल्य (%)' : 'Percentage (%)') : (lang === 'hi' ? 'संशोधन दर/राशि' : 'Modifier Value')}
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={rateModValue}
+                      onChange={(e) => setRateModValue(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-xs font-black text-indigo-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Weight Modification Card */}
+              <div className="p-3.5 bg-emerald-50/50 dark:bg-slate-900/60 border border-emerald-100/60 dark:border-slate-800 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-1.5">
+                  <span className="text-xs font-black uppercase text-emerald-700 dark:text-emerald-400 tracking-wider flex items-center gap-1.5">
+                    <Scale className="w-3.5 h-3.5 text-emerald-500" />
+                    {lang === 'hi' ? 'वजन संसोधन' : 'Weight Modifier'}
+                  </span>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold uppercase text-slate-400">{lang === 'hi' ? 'संशोधन प्रकार' : 'Modification Type'}</label>
+                  <select
+                    value={weightModType}
+                    onChange={(e) => {
+                      playClickSound(settings.soundEnabled);
+                      setWeightModType(e.target.value as any);
+                    }}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-black text-slate-705 dark:text-slate-350 outline-none"
+                  >
+                    <option value="none">{lang === 'hi' ? 'कोई परिवर्तन नहीं' : 'None (Keep Original)'}</option>
+                    <option value="percent_add">{lang === 'hi' ? 'प्रतिशत (%) वजन जोड़ें' : 'Add % (Tare/Packaging)'}</option>
+                    <option value="percent_sub">{lang === 'hi' ? 'प्रतिशत (%) वजन घटाएं' : 'Subtract % (Shrinkage)'}</option>
+                    <option value="factor">{lang === 'hi' ? 'कारक से वजन गुणा करें' : 'Multiply Weight'}</option>
+                    <option value="flat_add">{lang === 'hi' ? 'फ्लैट वजन जोड़ें (+KG)' : 'Add Flat Weight (+KG)'}</option>
+                    <option value="flat_sub">{lang === 'hi' ? 'फ्लैट वजन घटाएं (-KG)' : 'Subtract Flat Weight (-KG)'}</option>
+                  </select>
+                </div>
+
+                {weightModType !== 'none' && (
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                      {weightModType.startsWith('percent') ? (lang === 'hi' ? 'प्रतिशत दर (%)' : 'Percentage (%)') : (lang === 'hi' ? 'वजन (KG)' : 'Modifier Weight (KG)')}
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={weightModValue}
+                      onChange={(e) => setWeightModValue(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-xs font-black text-emerald-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Add Custom Item Card */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-900/30 border border-slate-200/60 dark:border-slate-850 rounded-2xl space-y-2.5">
+                <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
+                  {lang === 'hi' ? '+ नया आइटम जोड़ें (मैनुअल)' : '+ Add Manual Item to Batch'}
+                </span>
+                
+                <div className="grid grid-cols-1 gap-2.5">
+                  <input
+                    type="text"
+                    placeholder={lang === 'hi' ? 'वस्तु का नाम (उदा. प्याज़)' : 'Item name (e.g. Garlic)'}
+                    value={newItemName}
+                    onChange={(e) => setNewItemName(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">{lang === 'hi' ? `दर (${settings.preferredCurrency || '₹'}/KG)` : `Rate (${settings.preferredCurrency || '₹'}/KG)`}</span>
+                      <input
+                        type="number"
+                        placeholder="Rate"
+                        value={newItemRate}
+                        onChange={(e) => setNewItemRate(e.target.value)}
+                        className="w-full px-2 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold font-mono outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">{lang === 'hi' ? 'वजन (KG)' : 'Weight (KG)'}</span>
+                      <input
+                        type="number"
+                        placeholder="Weight"
+                        value={newItemWeight}
+                        onChange={(e) => setNewItemWeight(e.target.value)}
+                        className="w-full px-2 py-1.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold font-mono outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rate = parseFloat(newItemRate) || 0;
+                    const weight = parseFloat(newItemWeight) || 0;
+                    const name = newItemName.trim() || (lang === 'hi' ? `आइटम #${batchList.length + 1}` : `Item #${batchList.length + 1}`);
+                    
+                    playClickSound(settings.soundEnabled);
+                    setBatchList(prev => [
+                      ...prev,
+                      {
+                        id: 'manual_' + Date.now() + Math.random().toString(36).substring(2, 5),
+                        name,
+                        originalRate: rate,
+                        originalWeight: weight,
+                        originalTotal: Number((rate * weight).toFixed(settings.decimalPrecision)),
+                      }
+                    ]);
+                    setNewItemName('');
+                  }}
+                  className="w-full py-1.5 bg-slate-800 hover:bg-slate-750 dark:bg-slate-700 dark:hover:bg-slate-650 text-white text-[11px] font-black rounded-lg uppercase tracking-wider transition-colors active:scale-95 cursor-pointer"
+                >
+                  {lang === 'hi' ? 'बैच में जोड़ें' : 'Add to Batch'}
+                </button>
+              </div>
+            </div>
+          )}
+
           <button
             onClick={handleSaveToLedger}
             className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl flex items-center justify-center gap-2 text-xs uppercase cursor-pointer"
@@ -342,8 +598,8 @@ export default function BusinessTools({
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-slate-50 dark:bg-slate-900/40 p-4 border border-slate-200/50 dark:border-slate-800 rounded-2xl">
                     <p className="text-xs text-slate-500 dark:text-slate-400 uppercase font-medium">Net Amount</p>
-                    <p className={`text-2xl font-black font-mono tracking-wide mt-1 ${audit.isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>
-                      ₹{absoluteAmt.toLocaleString(undefined, { maximumFractionDigits: settings.decimalPrecision })}
+                    <p className={`text-2xl font-black font-mono tracking-wide mt-1 ${audit.isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-605'}`}>
+                      {settings.preferredCurrency || '₹'}{absoluteAmt.toLocaleString(undefined, { maximumFractionDigits: settings.decimalPrecision })}
                     </p>
                     <span className={`text-[10px] font-bold px-2 py-0.5 mt-1 inline-block rounded ${audit.isProfit ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>
                       {audit.isProfit ? 'PROFIT' : 'LOSS'}
@@ -405,19 +661,19 @@ export default function BusinessTools({
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <p className="text-[10px] uppercase font-bold text-slate-400">Base Cost</p>
-                    <p className="font-mono text-base font-extrabold text-slate-800 dark:text-white mt-1">₹{audit.base.toFixed(2)}</p>
+                    <p className="font-mono text-base font-extrabold text-slate-800 dark:text-white mt-1">{settings.preferredCurrency || '₹'}{audit.base.toFixed(2)}</p>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <p className="text-[10px] uppercase font-bold text-slate-400">CGST (Central)</p>
-                    <p className="font-mono text-base font-extrabold text-emerald-700 dark:text-emerald-450 mt-1">₹{audit.cgst.toFixed(2)}</p>
+                    <p className="font-mono text-base font-extrabold text-emerald-700 dark:text-emerald-450 mt-1">{settings.preferredCurrency || '₹'}{audit.cgst.toFixed(2)}</p>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <p className="text-[10px] uppercase font-bold text-slate-400">SGST (State)</p>
-                    <p className="font-mono text-base font-extrabold text-emerald-700 dark:text-emerald-450 mt-1">₹{audit.sgst.toFixed(2)}</p>
+                    <p className="font-mono text-base font-extrabold text-emerald-700 dark:text-emerald-450 mt-1">{settings.preferredCurrency || '₹'}{audit.sgst.toFixed(2)}</p>
                   </div>
                   <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100">
                     <p className="text-[10px] uppercase font-bold text-emerald-800">Total Bill</p>
-                    <p className="font-mono text-base font-black text-emerald-900 mt-1">₹{audit.total.toFixed(2)}</p>
+                    <p className="font-mono text-base font-black text-emerald-900 mt-1">{settings.preferredCurrency || '₹'}{audit.total.toFixed(2)}</p>
                   </div>
                 </div>
 
@@ -426,15 +682,15 @@ export default function BusinessTools({
                   <p className="font-bold uppercase text-slate-400 tracking-wider">Receipt split breakdown</p>
                   <div className="flex justify-between items-center py-1">
                     <span>Base Value before GST:</span>
-                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">₹{audit.base.toFixed(2)}</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">{settings.preferredCurrency || '₹'}{audit.base.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center py-1 border-t border-slate-200/50">
                     <span>Central Central SGST (split 50% of {gstRate}%):</span>
-                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">₹{audit.cgst.toFixed(2)}</span>
+                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{settings.preferredCurrency || '₹'}{audit.cgst.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center py-1 border-t border-slate-200/50">
                     <span>State Central CGST (split 50% of {gstRate}%):</span>
-                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">₹{audit.sgst.toFixed(2)}</span>
+                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{settings.preferredCurrency || '₹'}{audit.sgst.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -452,15 +708,15 @@ export default function BusinessTools({
                 <div className="grid grid-cols-3 gap-3 text-center">
                   <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
                     <p className="text-[10px] uppercase font-bold text-emerald-800">Monthly EMI</p>
-                    <p className="font-mono text-lg font-black text-emerald-900 mt-1">₹{audit.emi.toFixed(0)}</p>
+                    <p className="font-mono text-lg font-black text-emerald-900 mt-1">{settings.preferredCurrency || '₹'}{audit.emi.toFixed(0)}</p>
                   </div>
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                     <p className="text-[10px] uppercase font-bold text-slate-450">Total Interest</p>
-                    <p className="font-mono text-base font-bold text-rose-600 mt-1">₹{audit.interest.toFixed(0)}</p>
+                    <p className="font-mono text-base font-bold text-rose-600 mt-1">{settings.preferredCurrency || '₹'}{audit.interest.toFixed(0)}</p>
                   </div>
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                     <p className="text-[10px] uppercase font-bold text-slate-450">Total Payable</p>
-                    <p className="font-mono text-base font-bold text-slate-800 dark:text-white mt-1">₹{audit.payable.toFixed(0)}</p>
+                    <p className="font-mono text-base font-bold text-slate-800 dark:text-white mt-1">{settings.preferredCurrency || '₹'}{audit.payable.toFixed(0)}</p>
                   </div>
                 </div>
 
@@ -487,6 +743,242 @@ export default function BusinessTools({
                       );
                     })()}
                   </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {activeTab === 'bulk_batch' && (() => {
+            // Filter history to find importable tarazu items
+            const importableTarazuItems = (history || []).filter(item => item.type === 'tarazu');
+
+            return (
+              <div className="space-y-6">
+                {/* Header overview comparison */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="bg-slate-50 dark:bg-slate-900/40 p-3 border border-slate-200/50 dark:border-slate-800 rounded-2xl flex flex-col justify-between">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase">{lang === 'hi' ? 'कुल आइटम' : 'Total Items'}</span>
+                    <span className="text-xl font-black font-mono text-slate-800 dark:text-white mt-1">
+                      {batchList.length}
+                    </span>
+                  </div>
+
+                  <div className="bg-indigo-50/25 dark:bg-indigo-950/20 p-3 border border-indigo-100/50 dark:border-indigo-900/20 rounded-2xl flex flex-col justify-between">
+                    <span className="text-[10px] text-indigo-500 dark:text-indigo-400 font-black uppercase tracking-wider">{lang === 'hi' ? `मूल ➔ संशोधित ${settings.preferredCurrency || '₹'}` : `Original ➔ Modified ${settings.preferredCurrency || '₹'}`}</span>
+                    <span className="text-base font-black font-mono text-indigo-600 dark:text-indigo-400 mt-1 truncate">
+                      {settings.preferredCurrency || '₹'}{batchOriginalPriceTotal.toFixed(settings.decimalPrecision)} ➔ {settings.preferredCurrency || '₹'}{batchModifiedPriceTotal.toFixed(settings.decimalPrecision)}
+                    </span>
+                    <span className={`text-[9px] font-black mt-1.5 inline-block ${batchModifiedPriceTotal >= batchOriginalPriceTotal ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      {batchModifiedPriceTotal >= batchOriginalPriceTotal ? '▲ +' : '▼ -'}{settings.preferredCurrency || '₹'}{Math.abs(batchModifiedPriceTotal - batchOriginalPriceTotal).toFixed(settings.decimalPrecision)} {lang === 'hi' ? 'अंतर' : 'Diff'}
+                    </span>
+                  </div>
+
+                  <div className="bg-emerald-50/25 dark:bg-emerald-950/20 p-3 border border-emerald-100/50 dark:border-emerald-900/20 rounded-2xl flex flex-col justify-between col-span-2 sm:col-span-1">
+                    <span className="text-[10px] text-emerald-500 dark:text-emerald-400 font-black uppercase tracking-wider">{lang === 'hi' ? 'मूल ➔ संशोधित KG' : 'Original ➔ Modified KG'}</span>
+                    <span className="text-base font-black font-mono text-emerald-600 dark:text-emerald-400 mt-1 truncate">
+                      {batchOriginalWeightTotal.toFixed(3)}kg ➔ {batchModifiedWeightTotal.toFixed(3)}kg
+                    </span>
+                    <span className={`text-[9px] font-black mt-1.5 inline-block ${batchModifiedWeightTotal >= batchOriginalWeightTotal ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      {batchModifiedWeightTotal >= batchOriginalWeightTotal ? '▲ +' : '▼ -'}{Math.abs(batchModifiedWeightTotal - batchOriginalWeightTotal).toFixed(3)}kg {lang === 'hi' ? 'अंतर' : 'Diff'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Import section */}
+                <div className="p-4 bg-slate-50 dark:bg-slate-900/35 border border-slate-200/50 dark:border-slate-800 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-black uppercase text-slate-500 tracking-wider flex items-center gap-1.5">
+                      <Import className="w-3.5 h-3.5 text-indigo-500" />
+                      {lang === 'hi' ? 'इतिहास से लोड करें' : 'Import from History'}
+                    </p>
+                    {importableTarazuItems.length > 0 && (
+                      <button
+                        onClick={() => {
+                          playClickSound(settings.soundEnabled);
+                          const imported = importableTarazuItems.map((item, index) => {
+                            const isTarazu = item.type === 'tarazu';
+                            const rate = isTarazu ? item.rate : 0;
+                            const weight = isTarazu 
+                              ? (item.mode === 'weight_to_amount' ? ((item.inputKg || 0) + (item.inputG || 0) / 1000) : ((item.resultKg || 0) + (item.resultG || 0) / 1000))
+                              : 1;
+                            const totalVal = isTarazu ? (item.resultAmount || item.inputAmount || 0) : 0;
+                            return {
+                              id: `history_${item.id}_${index}_${Math.random().toString(36).substring(2,5)}`,
+                              name: isTarazu ? (lang === 'hi' ? `तपिश माप @ ${settings.preferredCurrency || '₹'}${rate}` : `Weighing Log @ ${settings.preferredCurrency || '₹'}${rate}`) : item.label,
+                              originalRate: rate,
+                              originalWeight: weight,
+                              originalTotal: totalVal,
+                            };
+                          });
+                          setBatchList(prev => [...prev, ...imported]);
+                        }}
+                        className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/50 px-2 py-1 rounded-lg hover:bg-emerald-100/60 active:scale-95 cursor-pointer"
+                      >
+                        {lang === 'hi' ? '+ सभी लोड करें' : '+ Load All'}
+                      </button>
+                    )}
+                  </div>
+
+                  {importableTarazuItems.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 font-medium">
+                      {lang === 'hi'
+                        ? 'इतिहास में कोई tarazu माप रिकॉर्ड नहीं मिला। पहले मापने का प्रयास करें!'
+                        : 'No tarazu measurement logs found in History. Try weighing some merchant packages first!'}
+                    </p>
+                  ) : (
+                    <div className="max-h-24 overflow-y-auto pr-1 space-y-1.5 divide-y divide-slate-150 dark:divide-slate-800/60">
+                      {importableTarazuItems.map((item) => {
+                        const isTarazu = item.type === 'tarazu';
+                        const rate = isTarazu ? item.rate : 0;
+                        const weight = isTarazu 
+                          ? (item.mode === 'weight_to_amount' ? ((item.inputKg || 0) + (item.inputG || 0) / 1000) : ((item.resultKg || 0) + (item.resultG || 0) / 1000))
+                          : 1;
+                        const totalAmount = isTarazu ? (item.resultAmount || item.inputAmount || 0) : 0;
+
+                        return (
+                          <div key={item.id} className="flex justify-between items-center text-[10px] py-1.5 first:pt-0">
+                            <div className="truncate max-w-[70%] font-semibold text-slate-600 dark:text-slate-350">
+                              {item.label}
+                            </div>
+                            <button
+                              onClick={() => {
+                                playClickSound(settings.soundEnabled);
+                                setBatchList(prev => [
+                                  ...prev,
+                                  {
+                                    id: `history_single_${item.id}_${Math.random().toString(36).substring(2,5)}`,
+                                    name: lang === 'hi' ? `माप @ ${settings.preferredCurrency || '₹'}${rate}` : `Weigh log @ ${settings.preferredCurrency || '₹'}${rate}`,
+                                    originalRate: rate,
+                                    originalWeight: weight,
+                                    originalTotal: totalAmount,
+                                  }
+                                ]);
+                              }}
+                              className="px-1.5 py-0.5 bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-100/40 text-indigo-600 dark:text-indigo-400 rounded-md font-bold hover:bg-indigo-100/95 active:scale-95 cursor-pointer text-[8px]"
+                            >
+                              + {lang === 'hi' ? 'आयात करें' : 'Import'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Batch list table */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                      {lang === 'hi' ? 'सक्रिय बैच सूची' : 'Active Batch List'} ({batchList.length})
+                    </p>
+                    {batchList.length > 0 && (
+                      <button
+                        onClick={() => {
+                          playClickSound(settings.soundEnabled);
+                          setBatchList([]);
+                        }}
+                        className="text-[9px] font-black uppercase text-red-500 hover:text-red-600 flex items-center gap-1 cursor-pointer bg-red-50 dark:bg-red-950/30 border border-red-200/20 px-2 py-0.5 rounded"
+                      >
+                        <Trash2 className="w-2.5 h-2.5" />
+                        {lang === 'hi' ? 'बैच साफ़ करें' : 'Clear Batch'}
+                      </button>
+                    )}
+                  </div>
+
+                  {batchList.length === 0 ? (
+                    <div className="text-center py-10 bg-slate-50/50 dark:bg-slate-900/20 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+                      <p className="text-xs text-slate-400 font-bold">
+                        {lang === 'hi' ? 'आपकी बैच सूची खाली है।' : 'Your batch list is empty.'}
+                      </p>
+                      <p className="text-[10px] text-slate-400 px-6 mt-1">
+                        {lang === 'hi'
+                          ? 'इतिहास लॉग से आइटम आयात करें या बाएँ फलक से मैनुअल विवरण जोड़ें।'
+                          : 'Import items from the History Log above, or add manual details from the left panel.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
+                      {/* Table Header */}
+                      <div className="grid grid-cols-12 bg-slate-50 dark:bg-slate-900 px-3 py-2 text-[9px] font-extrabold uppercase text-slate-450 tracking-wider">
+                        <div className="col-span-4">{lang === 'hi' ? 'सामान का नाम' : 'Item Name'}</div>
+                        <div className="col-span-3 text-right">Original</div>
+                        <div className="col-span-4 text-right text-indigo-500 font-black">Modified (Live)</div>
+                        <div className="col-span-1"></div>
+                      </div>
+
+                      {/* Display items */}
+                      <div className="max-h-60 overflow-y-auto divide-y divide-slate-105 dark:divide-slate-800/80 pr-0.5">
+                        {modifiedBatch.map((item) => (
+                          <div key={item.id} className="grid grid-cols-12 items-center px-3 py-2.5 text-[11px] hover:bg-slate-50/55 dark:hover:bg-slate-900/10">
+                            {/* Name */}
+                            <div className="col-span-4 pr-1 font-bold truncate text-slate-700 dark:text-slate-300" title={item.name}>
+                              {item.name}
+                            </div>
+                            
+                            {/* Original */}
+                            <div className="col-span-3 text-right text-slate-400 font-medium font-mono text-[10px] leading-snug">
+                              <div>{settings.preferredCurrency || '₹'}{item.originalRate}/kg</div>
+                              <div>{item.originalWeight.toFixed(3)}kg</div>
+                              <div className="font-bold text-slate-450 mt-0.5">{settings.preferredCurrency || '₹'}{item.originalTotal.toFixed(settings.decimalPrecision)}</div>
+                            </div>
+
+                            {/* Modified */}
+                            <div className="col-span-4 text-right font-semibold font-mono text-indigo-600 dark:text-indigo-400 leading-snug">
+                              <div>
+                                {settings.preferredCurrency || '₹'}{item.modifiedRate}/kg 
+                                {item.modifiedRate !== item.originalRate && (
+                                  <span className={`text-[8px] font-bold ml-1 ${item.modifiedRate > item.originalRate ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                    {item.modifiedRate > item.originalRate ? '▲' : '▼'}
+                                  </span>
+                                )}
+                              </div>
+                              <div>
+                                {item.modifiedWeight.toFixed(3)}kg
+                                {item.modifiedWeight !== item.originalWeight && (
+                                  <span className={`text-[8px] font-bold ml-1 ${item.modifiedWeight > item.originalWeight ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                    {item.modifiedWeight > item.originalWeight ? '▲' : '▼'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="font-black text-indigo-705 dark:text-indigo-300 text-xs mt-0.5">
+                                {settings.preferredCurrency || '₹'}{item.modifiedTotal.toFixed(settings.decimalPrecision)}
+                              </div>
+                            </div>
+
+                            {/* Delete single item action */}
+                            <div className="col-span-1 text-right">
+                              <button
+                                onClick={() => {
+                                  playClickSound(settings.soundEnabled);
+                                  setBatchList(prev => prev.filter(x => x.id !== item.id));
+                                }}
+                                className="p-1 hover:text-rose-500 text-slate-350 dark:text-slate-500 rounded-full hover:bg-rose-50 dark:hover:bg-rose-955 transition-colors cursor-pointer"
+                                title={lang === 'hi' ? 'आइटम हटाएँ' : 'Delete item'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Cumulative Total Row */}
+                      <div className="grid grid-cols-12 bg-slate-100/60 dark:bg-slate-900/40 px-3 py-3 font-mono text-[11px] font-bold border-t border-slate-205 dark:border-slate-800">
+                        <div className="col-span-4 uppercase text-slate-500 text-[10px] font-black tracking-wider">{lang === 'hi' ? 'कुल संचयी' : 'Total Cumulative'}</div>
+                        <div className="col-span-3 text-right text-slate-400 leading-normal text-[10px]">
+                          <div>{batchOriginalWeightTotal.toFixed(3)}kg</div>
+                          <div className="text-slate-500 font-bold mt-0.5">{settings.preferredCurrency || '₹'}{batchOriginalPriceTotal.toFixed(settings.decimalPrecision)}</div>
+                        </div>
+                        <div className="col-span-4 text-right text-indigo-700 dark:text-indigo-400 leading-normal text-xs font-black">
+                          <div>{batchModifiedWeightTotal.toFixed(3)}kg</div>
+                          <div className="text-indigo-600 dark:text-indigo-300 font-black mt-0.5 text-sm">
+                            {settings.preferredCurrency || '₹'}{batchModifiedPriceTotal.toFixed(settings.decimalPrecision)}
+                          </div>
+                        </div>
+                        <div className="col-span-1"></div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );

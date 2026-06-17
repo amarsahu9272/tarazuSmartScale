@@ -156,6 +156,8 @@ export const i18n = {
     darkModeLabel: 'Dark Visual Mode Theme',
     saveProfile: 'Save Shop Profile',
     resetApp: 'Reset All Data',
+    batterySaverMode: 'Battery Saver Mode',
+    batterySaverDesc: 'Reduces background animations, slows down idle timer, and reduces non-essential updates to extend device life during shifts.',
   },
   hi: {
     // Navigation
@@ -312,6 +314,8 @@ export const i18n = {
     darkModeLabel: 'डार्क विज़ुअल थीम',
     saveProfile: 'दुकान प्रोफ़ाइल सहेजें',
     resetApp: 'सभी डेटा रिसेट करें',
+    batterySaverMode: 'बैटरी सेवर मोड (ऊर्जा बचत)',
+    batterySaverDesc: 'लंबे काम के लिए बैकग्राउंड एनिमेशन कम करें, निष्क्रियता टाइमर धीमा करें और अनावश्यक अपडेट घटाएं।',
   },
 };
 

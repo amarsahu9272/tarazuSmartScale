@@ -48,3 +48,82 @@
   background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
   background-size: 16px 16px;
 }
+
+/* Print-friendly utility stylesheet */
+@media print {
+  /* Hide all background container UI elements */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Make the print-area container visible and force-dock it to the absolute top-left corner */
+  #invoice-print-area, #invoice-print-area * {
+    visibility: visible;
+  }
+  
+  #invoice-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0px !important;
+    margin: 0px !important;
+  }
+
+  /* Stop showing dark mode styles in physical ink */
+  .dark {
+    background-color: white !important;
+    color: black !important;
+  }
+}
+
+/* Battery Saver optimizations */
+html.battery-saver,
+html.battery-saver body,
+html.battery-saver body *,
+html.battery-saver header,
+html.battery-saver aside,
+html.battery-saver main,
+html.battery-saver nav,
+html.battery-saver button,
+html.battery-saver input,
+html.battery-saver select,
+html.battery-saver textarea {
+  transition: none !important;
+  transition-duration: 0ms !important;
+  animation-duration: 1ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+}
+
+html.battery-saver .animate-pulse,
+html.battery-saver .animate-bounce,
+html.battery-saver .animate-spin,
+html.battery-saver .animate-ping,
+html.battery-saver [class*="animate-"] {
+  animation: none !important;
+  transition: none !important;
+  filter: none !important;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(1rem) scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+
