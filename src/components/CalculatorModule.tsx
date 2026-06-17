@@ -2063,12 +2063,93 @@ export default function CalculatorModule({
                 </div>
               )}
 
-              <div className="flex items-center justify-between text-slate-800 dark:text-slate-300 border-b border-slate-150 dark:border-slate-800/50 pb-2.5">
+              <div className="flex-col items-center justify-between text-slate-800 dark:text-slate-300 border-b border-slate-150 dark:border-slate-800/50 pb-2.5">
                 <span className="text-xs font-black">
                   {isTaxEnabled 
                     ? (lang === 'hi' ? 'कुल देय राशि' : 'NET PAYABLE TOTAL') 
                     : (lang === 'hi' ? 'कुल बिल योग' : 'CUMULATIVE TOTAL')}
                 </span>
+                <div className="relative inline-block shrink-0">
+                    <motion.span
+                      id="basket-total-display"
+                      key={`${isTaxEnabled}-${discountValue}-${grandTotal}-${currency}-${isFractionFormat}`}
+                      initial={{ scale: 0.85, color: '#f59e0b' }}
+                      animate={{ 
+                         scale: [0.85, 1.22, 0.96, 1], 
+                         color: isTaxEnabled
+                           ? ['#f59e0b', '#f59e0b', '#eab308', '#d97706']
+                           : (isFractionFormat ? ['#f59e0b', '#6366f1', '#4f46e5', '#6366f1'] : ['#f59e0b', '#f59e0b', '#10b981', '#10af7e'])
+                      }}
+                      transition={{ duration: 0.48, ease: "easeInOut" }}
+                      className={`text-base font-black font-mono inline-flex items-center gap-1.5 origin-right ml-1 cursor-pointer select-none active:scale-95 transition-all px-2 py-1 rounded-xl border border-transparent shadow-none duration-200 hover:scale-103 ${
+                        isTaxEnabled
+                          ? 'text-amber-600 dark:text-amber-400 hover:!text-amber-800 dark:hover:!text-amber-300 hover:bg-amber-100/50 hover:border-amber-250 dark:hover:bg-amber-950/30 dark:hover:border-amber-800'
+                          : isFractionFormat 
+                            ? 'text-indigo-600 dark:text-indigo-400 hover:!text-indigo-800 dark:hover:!text-indigo-300 hover:bg-indigo-100/50 hover:border-indigo-250 dark:hover:bg-indigo-950/30 dark:hover:border-indigo-800' 
+                            : 'text-emerald-600 dark:text-emerald-400 hover:!text-emerald-800 dark:hover:!text-emerald-300 hover:bg-emerald-100/50 hover:border-emerald-250 dark:hover:bg-emerald-950/30 dark:hover:border-emerald-800'
+                      }`}
+                      onMouseDown={startLongPress}
+                      onMouseUp={cancelLongPress}
+                      onMouseLeave={cancelLongPress}
+                      onTouchStart={startLongPress}
+                      onTouchEnd={cancelLongPress}
+                      onContextMenu={handleContextMenu}
+                      title={lang === 'hi' ? 'मुद्रा बदलने के लिए लंबे समय तक दबाएं' : 'Long press to change currency'}
+                    >
+                      <span>
+                        {currency}{isFractionFormat ? formatAsFraction(isTaxEnabled ? grandTotal : subtotalAfterDiscount) : (isTaxEnabled ? grandTotal : subtotalAfterDiscount).toFixed(settings.decimalPrecision)}
+                      </span>
+                      {isFractionFormat ? (
+                        <span 
+                          id="fraction-indicator-state"
+                          className="inline-flex items-center justify-center text-[9px] px-1 bg-indigo-100 dark:bg-indigo-950/65 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 rounded font-black font-sans scale-90 origin-left"
+                          title={lang === 'hi' ? 'भिन्न प्रारूप सक्रिय' : 'Fraction format active'}
+                        >
+                          ½
+                        </span>
+                      ) : (
+                        <span 
+                          id="decimal-indicator-state"
+                          className="inline-flex items-center justify-center text-[9px] px-1 bg-emerald-100 dark:bg-emerald-950/65 border border-emerald-250 dark:border-emerald-800/80 text-emerald-700 dark:text-emerald-400 rounded font-black font-sans scale-90 origin-left"
+                          title={lang === 'hi' ? 'दशमलव प्रारूप सक्रिय' : 'Decimal format active'}
+                        >
+                          .00
+                        </span>
+                      )}
+                    </motion.span>
+
+                    {showCurrencyMenu && (
+                      <>
+                        <div 
+                          className="fixed inset-0 z-40 bg-transparent" 
+                          onClick={() => setShowCurrencyMenu(false)} 
+                        />
+                        <div 
+                          className="absolute right-0 bottom-full mb-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-1.5 shadow-xl flex gap-1.5 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+                        >
+                          {['₹', '$', '£', '€'].map((sym) => (
+                            <button
+                              key={sym}
+                              type="button"
+                              onClick={() => {
+                                playClickSound(settings.soundEnabled);
+                                setCurrency(sym);
+                                localStorage.setItem('tarazu_calc_currency', sym);
+                                setShowCurrencyMenu(false);
+                              }}
+                              className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs transition-colors cursor-pointer ${
+                                currency === sym
+                                  ? 'bg-emerald-500 text-white'
+                                  : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-705 dark:text-slate-300'
+                              }`}
+                            >
+                              {sym}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
@@ -2441,87 +2522,7 @@ export default function CalculatorModule({
                     </div>
                   )}
                 </div>
-                <div className="relative inline-block shrink-0">
-                    <motion.span
-                      id="basket-total-display"
-                      key={`${isTaxEnabled}-${discountValue}-${grandTotal}-${currency}-${isFractionFormat}`}
-                      initial={{ scale: 0.85, color: '#f59e0b' }}
-                      animate={{ 
-                         scale: [0.85, 1.22, 0.96, 1], 
-                         color: isTaxEnabled
-                           ? ['#f59e0b', '#f59e0b', '#eab308', '#d97706']
-                           : (isFractionFormat ? ['#f59e0b', '#6366f1', '#4f46e5', '#6366f1'] : ['#f59e0b', '#f59e0b', '#10b981', '#10af7e'])
-                      }}
-                      transition={{ duration: 0.48, ease: "easeInOut" }}
-                      className={`text-base font-black font-mono inline-flex items-center gap-1.5 origin-right ml-1 cursor-pointer select-none active:scale-95 transition-all px-2 py-1 rounded-xl border border-transparent shadow-none duration-200 hover:scale-103 ${
-                        isTaxEnabled
-                          ? 'text-amber-600 dark:text-amber-400 hover:!text-amber-800 dark:hover:!text-amber-300 hover:bg-amber-100/50 hover:border-amber-250 dark:hover:bg-amber-950/30 dark:hover:border-amber-800'
-                          : isFractionFormat 
-                            ? 'text-indigo-600 dark:text-indigo-400 hover:!text-indigo-800 dark:hover:!text-indigo-300 hover:bg-indigo-100/50 hover:border-indigo-250 dark:hover:bg-indigo-950/30 dark:hover:border-indigo-800' 
-                            : 'text-emerald-600 dark:text-emerald-400 hover:!text-emerald-800 dark:hover:!text-emerald-300 hover:bg-emerald-100/50 hover:border-emerald-250 dark:hover:bg-emerald-950/30 dark:hover:border-emerald-800'
-                      }`}
-                      onMouseDown={startLongPress}
-                      onMouseUp={cancelLongPress}
-                      onMouseLeave={cancelLongPress}
-                      onTouchStart={startLongPress}
-                      onTouchEnd={cancelLongPress}
-                      onContextMenu={handleContextMenu}
-                      title={lang === 'hi' ? 'मुद्रा बदलने के लिए लंबे समय तक दबाएं' : 'Long press to change currency'}
-                    >
-                      <span>
-                        {currency}{isFractionFormat ? formatAsFraction(isTaxEnabled ? grandTotal : subtotalAfterDiscount) : (isTaxEnabled ? grandTotal : subtotalAfterDiscount).toFixed(settings.decimalPrecision)}
-                      </span>
-                      {isFractionFormat ? (
-                        <span 
-                          id="fraction-indicator-state"
-                          className="inline-flex items-center justify-center text-[9px] px-1 bg-indigo-100 dark:bg-indigo-950/65 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 rounded font-black font-sans scale-90 origin-left"
-                          title={lang === 'hi' ? 'भिन्न प्रारूप सक्रिय' : 'Fraction format active'}
-                        >
-                          ½
-                        </span>
-                      ) : (
-                        <span 
-                          id="decimal-indicator-state"
-                          className="inline-flex items-center justify-center text-[9px] px-1 bg-emerald-100 dark:bg-emerald-950/65 border border-emerald-250 dark:border-emerald-800/80 text-emerald-700 dark:text-emerald-400 rounded font-black font-sans scale-90 origin-left"
-                          title={lang === 'hi' ? 'दशमलव प्रारूप सक्रिय' : 'Decimal format active'}
-                        >
-                          .00
-                        </span>
-                      )}
-                    </motion.span>
-
-                    {showCurrencyMenu && (
-                      <>
-                        <div 
-                          className="fixed inset-0 z-40 bg-transparent" 
-                          onClick={() => setShowCurrencyMenu(false)} 
-                        />
-                        <div 
-                          className="absolute right-0 bottom-full mb-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-1.5 shadow-xl flex gap-1.5 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
-                        >
-                          {['₹', '$', '£', '€'].map((sym) => (
-                            <button
-                              key={sym}
-                              type="button"
-                              onClick={() => {
-                                playClickSound(settings.soundEnabled);
-                                setCurrency(sym);
-                                localStorage.setItem('tarazu_calc_currency', sym);
-                                setShowCurrencyMenu(false);
-                              }}
-                              className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs transition-colors cursor-pointer ${
-                                currency === sym
-                                  ? 'bg-emerald-500 text-white'
-                                  : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-705 dark:text-slate-300'
-                              }`}
-                            >
-                              {sym}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
+                
               </div>
 
               {/* Action buttons */}
