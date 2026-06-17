@@ -190,6 +190,13 @@ export default function App() {
     playSuccessSound(settings.soundEnabled);
   };
 
+  const handleRestoreAllData = (restoredSettings: AppSettings, restoredHistory: HistoryItem[]) => {
+    setSettings(restoredSettings);
+    setHistory(restoredHistory);
+    setActiveSection('dashboard');
+    playSuccessSound(restoredSettings.soundEnabled);
+  };
+
   const handleLangToggle = () => {
     const nextLang: Language = settings.language === 'en' ? 'hi' : 'en';
     playSuccessSound(settings.soundEnabled);
@@ -456,6 +463,7 @@ export default function App() {
               settings={settings}
               onUpdateSettings={handleUpdateSettings}
               onResetAllData={handleResetData}
+              onRestoreAllData={handleRestoreAllData}
             />
           )}
         </main>

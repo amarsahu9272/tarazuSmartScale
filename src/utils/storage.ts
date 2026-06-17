@@ -19,11 +19,11 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const DEFAULT_PRESETS = [
-  { id: '1', name: 'Aloo (Potato)', nameHi: 'आलू', rate: 25, category: 'Vegetables' },
-  { id: '2', name: 'Pyaz (Onion)', nameHi: 'प्याज', rate: 40, category: 'Vegetables' },
-  { id: '3', name: 'Tamatar (Tomato)', nameHi: 'टमाटर', rate: 50, category: 'Vegetables' },
-  { id: '4', name: 'Chawal (Rice)', nameHi: 'चावल', rate: 60, category: 'Grains' },
-  { id: '5', name: 'Aata (Flour)', nameHi: 'आटा', rate: 45, category: 'Grains' },
+  { id: '1', name: 'Aloo (Potato)', nameHi: 'आलू', rate: 25, category: 'Vegetables', minThreshold: 5, currentStock: 12 },
+  { id: '2', name: 'Pyaz (Onion)', nameHi: 'प्याज', rate: 40, category: 'Vegetables', minThreshold: 5, currentStock: 4 },
+  { id: '3', name: 'Tamatar (Tomato)', nameHi: 'टमाटर', rate: 50, category: 'Vegetables', minThreshold: 3, currentStock: 2 },
+  { id: '4', name: 'Chawal (Rice)', nameHi: 'चावल', rate: 60, category: 'Grains', minThreshold: 10, currentStock: 25 },
+  { id: '5', name: 'Aata (Flour)', nameHi: 'आटा', rate: 45, category: 'Grains', minThreshold: 10, currentStock: 8 },
 ];
 
 export function getStoredSettings(): AppSettings {
@@ -92,6 +92,8 @@ export interface PresetRate {
   nameHi: string;
   rate: number;
   category?: string;
+  minThreshold?: number;
+  currentStock?: number;
 }
 
 const DEFAULT_CATEGORIES: PresetCategory[] = [

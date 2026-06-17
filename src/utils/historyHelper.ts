@@ -101,3 +101,62 @@ export const getDailyRevenueData = (history: HistoryItem[], preferredCurrency: s
     };
   });
 };
+
+export interface WeeklyRevenue {
+  week: string; // e.g., "Jun 14-Jun 20"
+  formattedWeek: string; // e.g., "Week of Jun 14, 2026"
+  rawWeekStart: string; // YYYY-MM-DD
+  revenue: number;
+}
+
+/**
+ * Computes chronological weekly revenue from history item logs.
+ */
+export const getWeeklyRevenueData = (history: HistoryItem[], preferredCurrency: string = '₹'): WeeklyRevenue[] => {
+  const weeklyMap: Record<string, { formattedWeek: string; revenue: number; label: string }> = {};
+
+  history.forEach((item) => {
+    const amt = parseAmountFromHistoryItem(item, preferredCurrency);
+    if (amt <= 0) return;
+
+    const dateObj = new Date(item.timestamp);
+    
+    // Find the Sunday of the week containing dateObj
+    const day = dateObj.getDay();
+    const diff = dateObj.getDate() - day; // 0 for Sunday
+    const startOfWeek = new Date(dateObj);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const yyyymmdd = startOfWeek.toISOString().split('T')[0];
+    
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    
+    const startLabel = startOfWeek.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const endLabel = endOfWeek.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const label = `${startLabel}-${endLabel}`; // e.g. "Jun 14-Jun 20"
+    const formattedWeek = `Week of ${startOfWeek.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+    if (!weeklyMap[yyyymmdd]) {
+      weeklyMap[yyyymmdd] = {
+        label,
+        formattedWeek,
+        revenue: 0,
+      };
+    }
+    weeklyMap[yyyymmdd].revenue += amt;
+  });
+
+  const sortedWeeks = Object.keys(weeklyMap).sort();
+
+  return sortedWeeks.map((rawWeekStart) => {
+    return {
+      week: weeklyMap[rawWeekStart].label,
+      formattedWeek: weeklyMap[rawWeekStart].formattedWeek,
+      rawWeekStart,
+      revenue: parseFloat(weeklyMap[rawWeekStart].revenue.toFixed(2)),
+    };
+  });
+};
+

@@ -411,6 +411,23 @@ export default function CalculatorModule({
     }
   }, settings.batterySaver ? 25000 : 5000);
 
+  // Periodically auto-saves all current billing & input values to sessionStorage
+  useAutoSave(() => {
+    try {
+      sessionStorage.setItem('tarazu_customer_name', customerName);
+      sessionStorage.setItem('tarazu_customer_phone', customerPhone);
+      sessionStorage.setItem('tarazu_invoice_no', invoiceNo);
+      sessionStorage.setItem('tarazu_new_item_name', newItemName);
+      sessionStorage.setItem('tarazu_discount_value', discountValue.toString());
+      sessionStorage.setItem('tarazu_calc_tax_rate', calcTaxRate.toString());
+      
+      const savedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastAutoSaved(savedTime);
+    } catch (err) {
+      console.warn('SessionStorage auto-save failed:', err);
+    }
+  }, settings.batterySaver ? 15000 : 3000);
+
   useEffect(() => {
     try {
       localStorage.setItem('tarazu_calc_memory', calcMemory.toString());
@@ -451,9 +468,30 @@ export default function CalculatorModule({
   const [showCurrencyMenu, setShowCurrencyMenu] = useState(false);
   const [longPressTimeout, setLongPressTimeout] = useState<any>(null);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [invoiceNo, setInvoiceNo] = useState(() => `TRZ-${Math.floor(100000 + Math.random() * 900000)}`);
+
+  // Input states loaded from sessionStorage to preserve values on page refreshes
+  const [customerName, setCustomerName] = useState(() => {
+    try {
+      return sessionStorage.getItem('tarazu_customer_name') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [customerPhone, setCustomerPhone] = useState(() => {
+    try {
+      return sessionStorage.getItem('tarazu_customer_phone') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [invoiceNo, setInvoiceNo] = useState(() => {
+    try {
+      return sessionStorage.getItem('tarazu_invoice_no') || `TRZ-${Math.floor(100000 + Math.random() * 900000)}`;
+    } catch {
+      return `TRZ-${Math.floor(100000 + Math.random() * 900000)}`;
+    }
+  });
+  const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
 
   useEffect(() => {
     if (activeInvoiceDraft && activeInvoiceDraft.type === 'draft_invoice') {
@@ -2192,7 +2230,18 @@ export default function CalculatorModule({
                           </div>
 
                           {/* Editable Billing Inputs - Hides values/borders during window.print() */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border print:border-none print:p-0 print:bg-transparent">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border print:border-none print:p-0 print:bg-transparent text-left relative">
+                            {lastAutoSaved && (
+                              <div className="sm:col-span-2 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500 font-bold select-none pb-1 border-b border-slate-200/50 print:hidden">
+                                <span className="flex items-center gap-1.5 text-emerald-650 dark:text-emerald-400 font-extrabold uppercase tracking-wider">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                                  <span>{lang === 'hi' ? 'ऑटो-सेव सुरक्षित' : 'Auto-Save Active'}</span>
+                                </span>
+                                <span className="font-mono">
+                                  {lang === 'hi' ? `अंतिम सुरक्षित: ${lastAutoSaved}` : `Saved: ${lastAutoSaved}`}
+                                </span>
+                              </div>
+                            )}
                             <div className="text-left">
                               <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 print:hidden select-none">
                                 {lang === 'hi' ? 'ग्राहक का नाम' : 'Customer Name'}
@@ -2359,7 +2408,7 @@ export default function CalculatorModule({
                                   lang: lang,
                                 });
                               }}
-                              className="flex-1 py-3 px-4 bg-purple-600 hover:bg-purple-500 text-dark text-xs rounded-2xl font-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-600/10 cursor-pointer text-center"
+                              className="flex-1 py-3 px-4 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-2xl font-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-600/10 cursor-pointer text-center"
                             >
                               <FileDown className="w-4 h-4" />
                               <span>{lang === 'hi' ? 'पीडीएफ डाउनलोड' : 'Download PDF'}</span>

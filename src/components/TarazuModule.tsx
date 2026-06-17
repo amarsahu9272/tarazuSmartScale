@@ -100,6 +100,9 @@ export default function TarazuModule({
   const [newPresetRate, setNewPresetRate] = useState('');
   const [newPresetCategory, setNewPresetCategory] = useState<string>('Vegetables');
   const [showAddPresetForm, setShowAddPresetForm] = useState(false);
+  const [newPresetThreshold, setNewPresetThreshold] = useState('');
+  const [newPresetStock, setNewPresetStock] = useState('');
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('');
 
   // Customizable categories state managers
   const [showManageCategories, setShowManageCategories] = useState(false);
@@ -291,6 +294,7 @@ export default function TarazuModule({
   const handlePresetSelect = (preset: PresetRate) => {
     playClickSound(settings.soundEnabled);
     setRate(String(preset.rate));
+    setSelectedPresetId(preset.id);
   };
 
   const handleAddPreset = (e: React.FormEvent) => {
@@ -299,12 +303,17 @@ export default function TarazuModule({
     const rateVal = parseFloat(newPresetRate);
     if (isNaN(rateVal) || rateVal <= 0) return;
 
+    const thresholdVal = parseFloat(newPresetThreshold);
+    const stockVal = parseFloat(newPresetStock);
+
     const newPr: PresetRate = {
       id: Date.now().toString(),
       name: newPresetName,
       nameHi: newPresetName,
       rate: rateVal,
       category: newPresetCategory,
+      minThreshold: isNaN(thresholdVal) ? undefined : thresholdVal,
+      currentStock: isNaN(stockVal) ? undefined : stockVal,
     };
 
     const updated = [...presets, newPr];
@@ -312,6 +321,8 @@ export default function TarazuModule({
     saveStoredPresets(updated);
     setNewPresetName('');
     setNewPresetRate('');
+    setNewPresetThreshold('');
+    setNewPresetStock('');
     setShowAddPresetForm(false);
     playSuccessSound(settings.soundEnabled);
   };
@@ -473,6 +484,11 @@ export default function TarazuModule({
     const r = parseFloat(rate) || 0;
     let savedSuccessfully = false;
 
+    // Find if we have a matching or selected preset product
+    const matchedPreset = presets.find(p => p.id === selectedPresetId || p.rate === r);
+    const productName = matchedPreset ? (lang === 'hi' ? matchedPreset.nameHi : matchedPreset.name) : '';
+    const prefix = productName ? `${productName} — ` : '';
+
     if (mode === 'amount_to_weight') {
       const amt = parseFloat(amount) || 0;
       const out = calculatedOutput as { kg: number, g: number, totalKg: number };
@@ -484,9 +500,24 @@ export default function TarazuModule({
           inputAmount: amt,
           resultKg: out.kg,
           resultG: out.g,
-          label: `${lang === 'hi' ? 'खरीद' : 'Buy'} ${settings.preferredCurrency || '₹'}${amt} @ ${settings.preferredCurrency || '₹'}${r}/KG → Weight: ${out.kg} KG ${out.g} G`,
+          label: `${prefix}${lang === 'hi' ? 'खरीद' : 'Buy'} ${settings.preferredCurrency || '₹'}${amt} @ ${settings.preferredCurrency || '₹'}${r}/KG → Weight: ${out.kg} KG ${out.g} G`,
         };
         onAddHistoryItem(itemData);
+        
+        // Deduct Stock
+        if (matchedPreset && matchedPreset.currentStock !== undefined) {
+          const weightInKg = out.totalKg || (out.kg + out.g / 1000);
+          const nextStock = Math.max(0, matchedPreset.currentStock - weightInKg);
+          const updatedPresets = presets.map((p) => {
+            if (p.id === matchedPreset.id) {
+              return { ...p, currentStock: Number(nextStock.toFixed(3)) };
+            }
+            return p;
+          });
+          setPresets(updatedPresets);
+          saveStoredPresets(updatedPresets);
+        }
+
         setHistoryItems((prev) => [
           {
             ...itemData,
@@ -509,9 +540,24 @@ export default function TarazuModule({
           inputKg: kgVal,
           inputG: gVal,
           resultAmount: Number(out.totalPrice.toFixed(settings.decimalPrecision)),
-          label: `${lang === 'hi' ? 'वजन' : 'Weigh'} ${kgVal} KG ${gVal} G @ ${settings.preferredCurrency || '₹'}${r}/KG → Price: ${settings.preferredCurrency || '₹'}${out.totalPrice.toFixed(settings.decimalPrecision)}`,
+          label: `${prefix}${lang === 'hi' ? 'वजन' : 'Weigh'} ${kgVal} KG ${gVal} G @ ${settings.preferredCurrency || '₹'}${r}/KG → Price: ${settings.preferredCurrency || '₹'}${out.totalPrice.toFixed(settings.decimalPrecision)}`,
         };
         onAddHistoryItem(itemData);
+
+        // Deduct Stock
+        if (matchedPreset && matchedPreset.currentStock !== undefined) {
+          const weightInKg = kgVal + (gVal / 1000);
+          const nextStock = Math.max(0, matchedPreset.currentStock - weightInKg);
+          const updatedPresets = presets.map((p) => {
+            if (p.id === matchedPreset.id) {
+              return { ...p, currentStock: Number(nextStock.toFixed(3)) };
+            }
+            return p;
+          });
+          setPresets(updatedPresets);
+          saveStoredPresets(updatedPresets);
+        }
+
         setHistoryItems((prev) => [
           {
             ...itemData,
@@ -1230,7 +1276,7 @@ export default function TarazuModule({
           {/* Mini popup form inline to add rates */}
           {showAddPresetForm && (
             <form onSubmit={handleAddPreset} className="bg-slate-50 dark:bg-slate-900/45 p-3 rounded-xl border border-slate-200/60 dark:border-slate-800 space-y-2">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                 <div>
                   <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">{lang === 'hi' ? 'सामान का नाम' : 'Product name'}</label>
                   <input
@@ -1252,6 +1298,28 @@ export default function TarazuModule({
                     value={newPresetRate}
                     onChange={(e) => setNewPresetRate(e.target.value)}
                     required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">{lang === 'hi' ? 'न्यूनतम स्टॉक (KG)' : 'Min Threshold (KG)'}</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="w-full text-xs p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-white outline-none"
+                    placeholder="e.g. 5"
+                    value={newPresetThreshold}
+                    onChange={(e) => setNewPresetThreshold(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">{lang === 'hi' ? 'आरंभिक स्टॉक (KG)' : 'Initial Stock (KG)'}</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="w-full text-xs p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-white outline-none"
+                    placeholder="e.g. 20"
+                    value={newPresetStock}
+                    onChange={(e) => setNewPresetStock(e.target.value)}
                   />
                 </div>
                 <div>

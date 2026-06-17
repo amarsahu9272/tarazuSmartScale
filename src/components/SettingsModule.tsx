@@ -1,14 +1,16 @@
-import React, { useState } from 'react';
-import { Settings, Save, Smartphone, Map, Volume2, Star, RefreshCcw, Landmark, Sparkles, CheckCircle, Download } from 'lucide-react';
-import { Language, AppSettings } from '../types';
+import React, { useState, useRef } from 'react';
+import { Settings, Save, Smartphone, Map, Volume2, Star, RefreshCcw, Landmark, Sparkles, CheckCircle, Download, Upload, AlertTriangle, Trash2, FileText } from 'lucide-react';
+import { Language, AppSettings, HistoryItem } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
+import { saveStoredPresets, saveStoredCategories } from '../utils/storage';
 
 interface SettingsModuleProps {
   lang: Language;
   settings: AppSettings;
   onUpdateSettings: (settings: AppSettings) => void;
   onResetAllData: () => void;
+  onRestoreAllData: (settings: AppSettings, history: HistoryItem[]) => void;
 }
 
 export default function SettingsModule({
@@ -16,6 +18,7 @@ export default function SettingsModule({
   settings,
   onUpdateSettings,
   onResetAllData,
+  onRestoreAllData,
 }: SettingsModuleProps) {
   const t = translate(lang);
 
@@ -43,6 +46,14 @@ export default function SettingsModule({
   }, [settings]);
 
   const [savingFlashing, setSavingFlashing] = useState(false);
+
+  // Backup & Restore states
+  const [dragActive, setDragActive] = useState(false);
+  const [parsedBackup, setParsedBackup] = useState<any>(null);
+  const [backupFileName, setBackupFileName] = useState('');
+  const [restoreError, setRestoreError] = useState('');
+  const [importSuccess, setImportSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,6 +137,141 @@ export default function SettingsModule({
     } catch (e) {
       console.error('Failed to export backup', e);
       alert(lang === 'hi' ? 'बैकअप डाउनलोड करने में विफल!' : 'Failed to download backup!');
+    }
+  };
+
+  const parseBackupContent = (content: string, fileName: string) => {
+    try {
+      const data = JSON.parse(content);
+      // Validate structure
+      if (!data || typeof data !== 'object') {
+        throw new Error(lang === 'hi' ? 'अमान्य फ़ाइल प्रारूप। JSON फ़ाइल होनी चाहिए।' : 'Invalid file format. Must be a JSON file.');
+      }
+
+      const hasSettings = data.tarazu_settings && typeof data.tarazu_settings === 'object';
+      const hasHistory = Array.isArray(data.tarazu_history);
+      const isAppIdMatched = data.appId === 'tarazu-smart-scale';
+
+      if (!hasSettings && !hasHistory && !isAppIdMatched) {
+        throw new Error(lang === 'hi' ? 'यह एक सही टारज़ू बैकअप फ़ाइल नहीं है।' : 'This file does not contain valid Tarazu backup data.');
+      }
+
+      setParsedBackup(data);
+      setBackupFileName(fileName);
+      setRestoreError('');
+      setImportSuccess(true);
+      playSuccessSound(soundEnabled);
+      setTimeout(() => setImportSuccess(false), 3000);
+    } catch (e: any) {
+      console.error(e);
+      setRestoreError(e.message || (lang === 'hi' ? 'फ़ाइल को पढ़ने या पार्स करने में त्रुटि।' : 'Error reading or parsing the file.'));
+      setParsedBackup(null);
+      setBackupFileName('');
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+  };
+
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+        setRestoreError(lang === 'hi' ? 'केवल JSON बैकअप फाइलें स्वीकृत हैं।' : 'Only JSON backup files are accepted.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result && typeof event.target.result === 'string') {
+          parseBackupContent(event.target.result, file.name);
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result && typeof event.target.result === 'string') {
+          parseBackupContent(event.target.result, file.name);
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const executeRestore = () => {
+    if (!parsedBackup) return;
+    playClickSound(soundEnabled);
+
+    const warnMsg = lang === 'hi'
+      ? 'क्या आप निश्चित रूप से बैकअप को रीस्टोर करना चाहते हैं? यह आपके सभी वर्तमान डेटा को मिटा देगा।'
+      : 'Are you sure you want to restore the backup? This will overwrite all your current data.';
+    
+    if (!confirm(warnMsg)) return;
+
+    try {
+      // 1. Settings
+      let restoredSettings = settings;
+      if (parsedBackup.tarazu_settings) {
+        restoredSettings = parsedBackup.tarazu_settings;
+        localStorage.setItem('tarazu_settings', JSON.stringify(restoredSettings));
+        
+        // Try setting theme
+        if (restoredSettings.darkMode) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+        if (restoredSettings.batterySaver) {
+          document.documentElement.classList.add('battery-saver');
+        } else {
+          document.documentElement.classList.remove('battery-saver');
+        }
+      }
+
+      // 2. History
+      let restoredHistory: HistoryItem[] = [];
+      if (Array.isArray(parsedBackup.tarazu_history)) {
+        restoredHistory = parsedBackup.tarazu_history;
+        localStorage.setItem('tarazu_history', JSON.stringify(restoredHistory));
+      }
+
+      // 3. Preset rates
+      if (Array.isArray(parsedBackup.tarazu_preset_rates)) {
+        saveStoredPresets(parsedBackup.tarazu_preset_rates);
+      }
+
+      // 4. Preset categories
+      if (Array.isArray(parsedBackup.tarazu_preset_categories)) {
+        saveStoredCategories(parsedBackup.tarazu_preset_categories);
+      }
+
+      // Success
+      alert(lang === 'hi' ? 'पूरा बैकअप सफलतापूर्वक रीस्टोर किया गया!' : 'Entire backup restored successfully!');
+      
+      // Update app state
+      onRestoreAllData(restoredSettings, restoredHistory);
+
+      // Reset local component state
+      setParsedBackup(null);
+      setBackupFileName('');
+      setRestoreError('');
+    } catch (err) {
+      console.error(err);
+      alert(lang === 'hi' ? 'रीस्टोर प्रक्रिया में विफलता!' : 'Failed during restore process!');
     }
   };
 
@@ -479,27 +625,148 @@ export default function SettingsModule({
           </div>
         </div>
 
-        {/* Full App Backup */}
-        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        {/* Full App Backup & Restore Hub */}
+        <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
           <div>
-            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-              {lang === 'hi' ? 'पूर्ण ऐप बैकअप' : 'Full App Backup'}
+            <p className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-widest flex items-center gap-1.5">
+              <RefreshCcw className="w-4 h-4 text-emerald-600 animate-none" />
+              {lang === 'hi' ? 'बैकअप और रीस्टोर हब' : 'Backup & Restore Hub'}
             </p>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-400 mt-1">
               {lang === 'hi' 
-                ? 'अपनी सभी सेटिंग्स, बहीखाता (इतिहास), भाव और श्रेणियों को एक ही JSON फ़ाइल के रूप में डाउनलोड करें।' 
-                : 'Download all your settings, ledger history, custom rate presets, and categories as a single JSON file.'}
+                ? 'डेटा सुरक्षा के लिए अपने बहीखाता इतिहास और सेटिंग्स को सुरक्षित रखें और पुनर्स्थापित करें।'
+                : 'Securely safeguard and dynamic-recover your entire ledger history, presets, and active settings.'}
             </p>
           </div>
-          <button
-            type="button"
-            id="btn-app-backup"
-            onClick={handleDownloadBackup}
-            className="py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 border border-emerald-250 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap self-end sm:self-auto flex items-center gap-1.5 justify-center"
-          >
-            <Download className="w-4 h-4" />
-            {lang === 'hi' ? 'बैकअप डाउनलोड करें' : 'Download Backup'}
-          </button>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Export Section */}
+            <div className="bg-slate-50/50 dark:bg-slate-900/30 border border-slate-200/60 dark:border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-505 uppercase tracking-widest block mb-1">
+                  {lang === 'hi' ? 'डेटा एक्सपोर्ट' : 'Export Data'}
+                </span>
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 leading-relaxed">
+                  {lang === 'hi'
+                    ? 'अपनी सभी सेटिंग्स, ट्रांजैक्शन बहीखाता सूची, कस्टम रेट प्रीसेट और श्रेणियों को एक `.json` बैकअप फाइल में डाउनलोड करें।'
+                    : 'Download your dynamic settings, full transaction logs, products rate presets, and category definitions as a `.json` backup.'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleDownloadBackup}
+                className="w-full py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 border border-emerald-250 dark:border-emerald-850 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                <span>{lang === 'hi' ? 'बैकअप डाउनलोड करें' : 'Download Backup'}</span>
+              </button>
+            </div>
+
+            {/* Import / Restore Section */}
+            <div className="bg-slate-50/50 dark:bg-slate-900/30 border border-slate-200/60 dark:border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-505 uppercase tracking-widest block mb-1">
+                  {lang === 'hi' ? 'डेटा रीस्टोर' : 'Restore Data'}
+                </span>
+                
+                {/* Drag and Drop Zone / File Input Area */}
+                {!parsedBackup ? (
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleFileDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all ${
+                      dragActive
+                        ? 'border-emerald-500 bg-emerald-500/5'
+                        : 'border-slate-300 dark:border-slate-700 hover:border-emerald-500 hover:bg-slate-100/30 dark:hover:bg-slate-950/20'
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileSelect}
+                      accept=".json,application/json"
+                      className="hidden"
+                    />
+                    <Upload className="mx-auto w-6 h-6 text-slate-400 dark:text-slate-500 mb-1.5" />
+                    
+                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      {lang === 'hi' ? 'फ़ाइल चुनें या यहाँ रीस्टोर करें' : 'Choose file or drag here to restore'}
+                    </p>
+                    <p className="text-[10.5px] text-slate-400 mt-0.5 font-mono">
+                      tarazu_backup_xxxx.json
+                    </p>
+                    {restoreError && (
+                      <p className="text-[10px] font-bold text-rose-500 mt-1.5 bg-rose-50 dark:bg-rose-950/30 px-2 py-1 rounded-md border border-rose-100 dark:border-rose-900/40">
+                        ⚠️ {restoreError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  /* Verified loaded backup preview card */
+                  <div className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                      <FileText className="w-4 h-4 shrink-0" />
+                      <span className="text-xs font-bold truncate max-w-[190px]" title={backupFileName}>
+                        {backupFileName}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px] bg-slate-50 dark:bg-slate-950/40 p-2 rounded-lg border border-slate-150 dark:border-slate-800 font-bold text-slate-650 dark:text-slate-400">
+                      <div>
+                        {lang === 'hi' ? 'दुकान का नाम:' : 'Shop Name:'}
+                        <span className="text-slate-850 dark:text-slate-200 block truncate">
+                          {parsedBackup.tarazu_settings?.shopName || 'Mera Kirana'}
+                        </span>
+                      </div>
+                      <div>
+                        {lang === 'hi' ? 'ट्रांजैक्शन इतिहास:' : 'Total Ledger:'}
+                        <span className="text-emerald-600 dark:text-emerald-400 block font-mono">
+                          {Array.isArray(parsedBackup.tarazu_history) ? `${parsedBackup.tarazu_history.length} items` : '0 items'}
+                        </span>
+                      </div>
+                      <div>
+                        {lang === 'hi' ? 'कस्टम भाव दर:' : 'Custom Presets:'}
+                        <span className="text-indigo-600 dark:text-indigo-400 block font-mono">
+                          {Array.isArray(parsedBackup.tarazu_preset_rates) ? `${parsedBackup.tarazu_preset_rates.length} rates` : '0 rates'}
+                        </span>
+                      </div>
+                      <div>
+                        {lang === 'hi' ? 'बैकअप तिथि:' : 'Exported At:'}
+                        <span className="text-slate-700 dark:text-slate-400 block truncate font-mono">
+                          {parsedBackup.exportedAt ? new Date(parsedBackup.exportedAt).toLocaleDateString() : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playClickSound(soundEnabled);
+                          setParsedBackup(null);
+                          setBackupFileName('');
+                          setRestoreError('');
+                        }}
+                        className="flex-1 py-1 px-2 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-[10px] font-bold rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-850 transition-colors"
+                      >
+                        {lang === 'hi' ? 'रद्द करें' : 'Cancel'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={executeRestore}
+                        className="flex-1 py-1 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors shadow-sm"
+                      >
+                        {lang === 'hi' ? 'पुष्टि करें' : 'Restore'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* App Download Link */}
