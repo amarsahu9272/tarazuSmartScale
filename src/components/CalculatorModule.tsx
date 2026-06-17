@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { useAutoSave } from '../hooks/useAutoSave';
-import { Delete, Trash2, Copy, CheckCircle, Scale, Volume2, ShoppingCart, ListPlus, Receipt, Printer, Share2, X, ChevronDown, Plus, Pencil, Check, Mic, MicOff } from 'lucide-react';
+import { Delete, Trash2, Copy, CheckCircle, Scale, Volume2, ShoppingCart, ListPlus, Receipt, Printer, Share2, X, ChevronDown, Plus, Pencil, Check, Mic, MicOff, FileDown } from 'lucide-react';
 import { Language, HistoryItem, AppSettings, HistoryItemInput } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
 import { triggerPrint } from '../utils/print';
+import { generateInvoicePDF } from '../utils/pdfGenerator';
 
 interface CalculatorModuleProps {
   lang: Language;
   settings: AppSettings;
   onAddHistoryItem: (item: HistoryItemInput) => void;
+  activeInvoiceDraft?: HistoryItem | null;
+  onClearInvoiceDraft?: () => void;
 }
 
 const formatAsFraction = (val: number): string => {
@@ -161,6 +164,8 @@ export default function CalculatorModule({
   lang,
   settings,
   onAddHistoryItem,
+  activeInvoiceDraft,
+  onClearInvoiceDraft,
 }: CalculatorModuleProps) {
   const t = translate(lang);
   
@@ -278,6 +283,7 @@ export default function CalculatorModule({
     }
   });
   const [receiptCopied, setReceiptCopied] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
   const [isFractionFormat, setIsFractionFormat] = useState(() => {
     try {
       return localStorage.getItem('tarazu_calc_is_fraction_format') === 'true';
@@ -447,7 +453,44 @@ export default function CalculatorModule({
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [invoiceNo] = useState(() => `TRZ-${Math.floor(100000 + Math.random() * 900000)}`);
+  const [invoiceNo, setInvoiceNo] = useState(() => `TRZ-${Math.floor(100000 + Math.random() * 900000)}`);
+
+  useEffect(() => {
+    if (activeInvoiceDraft && activeInvoiceDraft.type === 'draft_invoice') {
+      try {
+        setCustomerName(activeInvoiceDraft.customerName || '');
+        setCustomerPhone(activeInvoiceDraft.customerPhone || '');
+        setInvoiceNo(activeInvoiceDraft.invoiceNo || '');
+        setBasket(activeInvoiceDraft.basket || []);
+        setDiscountType(activeInvoiceDraft.discountType || 'percent');
+        setDiscountValue(activeInvoiceDraft.discountValue || 0);
+        setIsTaxEnabled(activeInvoiceDraft.isTaxEnabled || false);
+        
+        if (activeInvoiceDraft.isTaxEnabled) {
+          const matchedGst = activeInvoiceDraft.gstPercentage || 18;
+          const matchTax = taxTypes.find(t => Math.abs(t.rate - matchedGst) < 0.01);
+          if (matchTax) {
+            setActiveTaxTypeId(matchTax.id);
+          } else {
+            const newId = `custom-${Date.now()}`;
+            setTaxTypes(prev => [...prev, {
+              id: newId,
+              name: activeInvoiceDraft.taxName || 'GST',
+              rate: matchedGst
+            }]);
+            setActiveTaxTypeId(newId);
+          }
+        }
+        
+        playSuccessSound(settings.soundEnabled);
+        if (onClearInvoiceDraft) {
+          onClearInvoiceDraft();
+        }
+      } catch (err) {
+        console.error('Error loading draft', err);
+      }
+    }
+  }, [activeInvoiceDraft, taxTypes, settings.soundEnabled, onClearInvoiceDraft]);
 
   const startLongPress = (e: React.MouseEvent | React.TouchEvent) => {
     if ('button' in e && e.button !== 0) return;
@@ -601,6 +644,32 @@ export default function CalculatorModule({
     setBasket([]);
     setCheckedItemIds([]);
     setDiscountValue(0);
+  };
+
+  const handleSaveDraftInvoiceToHistory = () => {
+    if (basket.length === 0) return;
+    playSuccessSound(settings.soundEnabled);
+
+    onAddHistoryItem({
+      type: 'draft_invoice',
+      customerName,
+      customerPhone,
+      invoiceNo,
+      basket,
+      discountType,
+      discountValue,
+      isTaxEnabled,
+      gstPercentage,
+      taxName,
+      label: lang === 'hi' 
+        ? `ड्राफ्ट बिल ${invoiceNo}: ${customerName || 'नकद ग्राहक'} (${basket.length} सामान)` 
+        : `Draft Bill ${invoiceNo}: ${customerName || 'Cash Customer'} (${basket.length} items)`
+    });
+
+    setDraftSaved(true);
+    setTimeout(() => {
+      setDraftSaved(false);
+    }, 2000);
   };
 
   const copyBasketReceipt = () => {
@@ -2013,6 +2082,20 @@ export default function CalculatorModule({
                     <span>{lang === 'hi' ? 'साझा' : 'Share'}</span>
                   </button>
 
+                  <button
+                    type="button"
+                    disabled={basket.length === 0}
+                    onClick={handleSaveDraftInvoiceToHistory}
+                    className={`px-2 py-1 text-[10px] font-black rounded-lg transition-all border cursor-pointer active:scale-95 flex items-center gap-1 ${
+                      basket.length === 0
+                        ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-150 text-slate-350 dark:bg-slate-900/20 dark:border-slate-800 dark:text-slate-600'
+                        : 'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 border-emerald-250 dark:border-emerald-850 text-emerald-750 dark:text-emerald-400'
+                    }`}
+                    title={lang === 'hi' ? 'ड्राफ्ट सहेजें' : 'Save Draft'}
+                  >
+                    <span>{draftSaved ? (lang === 'hi' ? 'सहेजा गया! ✓' : 'Saved! ✓') : (lang === 'hi' ? 'ड्राफ्ट सहेजें' : 'Save Draft')}</span>
+                  </button>
+
                   <span 
                     id="basket-item-count-badge"
                     className="inline-flex items-center gap-1.5 bg-emerald-100 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide shadow-sm select-none"
@@ -2050,25 +2133,45 @@ export default function CalculatorModule({
                         <div id="invoice-print-area" className="bg-white text-black p-4 space-y-6 font-sans">
                           
                           {/* Invoice Header details */}
-                          <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b-2 border-black pb-5 text-left">
-                            <div className="space-y-1.5 select-none text-left">
-                              {/* Shop Information */}
-                              <h1 className="text-xl font-black uppercase tracking-tight text-black">
-                                {settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store')}
-                              </h1>
-                              {settings.shopPhone && (
-                                <p className="text-xs font-semibold text-black flex items-center gap-1">
-                                  <span>📱 {lang === 'hi' ? 'दूरभाष:' : 'Phone:'}</span> {settings.shopPhone}
-                                </p>
+                          <div className="flex flex-col sm:flex-row justify-between items-center sm:items-start gap-4 border-b-2 border-black pb-5 text-left w-full">
+                            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 select-none text-center sm:text-left">
+                              {/* Shop Brand Logo */}
+                              {settings.shopLogo && (
+                                settings.shopLogo.startsWith('data:image/') || settings.shopLogo.startsWith('http') ? (
+                                  <div className="w-16 h-16 shrink-0 rounded-2xl overflow-hidden border border-black/15 bg-white p-1 flex items-center justify-center shadow-sm">
+                                    <img
+                                      src={settings.shopLogo}
+                                      alt="Shop Logo"
+                                      className="max-w-full max-h-full object-contain"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="w-14 h-14 shrink-0 rounded-2xl bg-slate-100 border border-black/10 text-4xl flex items-center justify-center select-none shadow-sm">
+                                    {settings.shopLogo}
+                                  </div>
+                                )
                               )}
-                              {settings.shopGst && (
-                                <p className="text-xs font-bold text-black flex items-center gap-1 text-left">
-                                  <span>🧾 {lang === 'hi' ? 'जीएसटीआईएन (GSTIN):' : 'GSTIN:'}</span> {settings.shopGst}
-                                </p>
-                              )}
+                              
+                              <div className="space-y-1">
+                                {/* Shop Information */}
+                                <h1 className="text-xl font-black uppercase tracking-tight text-black">
+                                  {settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store')}
+                                </h1>
+                                {settings.shopPhone && (
+                                  <p className="text-xs font-semibold text-black flex items-center justify-center sm:justify-start gap-1">
+                                    <span>📱 {lang === 'hi' ? 'दूरभाष:' : 'Phone:'}</span> {settings.shopPhone}
+                                  </p>
+                                )}
+                                {settings.shopGst && (
+                                  <p className="text-xs font-bold text-black flex items-center justify-center sm:justify-start gap-1 text-left">
+                                    <span>🧾 {lang === 'hi' ? 'जीएसटीआईएन (GSTIN):' : 'GSTIN:'}</span> {settings.shopGst}
+                                  </p>
+                                )}
+                              </div>
                             </div>
 
-                            <div className="text-left sm:text-right space-y-1 self-stretch sm:self-auto">
+                            <div className="text-center sm:text-right space-y-1 self-stretch sm:self-auto">
                               <div className="text-xs font-bold text-black">
                                 <span className="uppercase">{lang === 'hi' ? 'बिल संख्या:' : 'Bill No:'}</span>
                                 <span className="font-mono ml-1">{invoiceNo}</span>
@@ -2215,6 +2318,51 @@ export default function CalculatorModule({
                               className="flex-1 py-3 px-4 bg-blue-50/80 hover:bg-blue-100 dark:bg-blue-900/10 dark:hover:bg-blue-900/20 text-blue-700 dark:text-blue-400 text-xs rounded-2xl font-black flex items-center justify-center gap-2 transition-all cursor-pointer text-center"
                             >
                               <span>{receiptCopied ? (lang === 'hi' ? 'कॉपी हो गया! ✓' : 'Copied! ✓') : (lang === 'hi' ? 'रसीद कॉपी करें' : 'Copy Text Receipt')}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSaveDraftInvoiceToHistory}
+                              className="flex-1 py-3 px-4 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-400 text-xs rounded-2xl font-black flex items-center justify-center gap-2 transition-all cursor-pointer text-center"
+                            >
+                              <span>{draftSaved ? (lang === 'hi' ? 'ड्राफ्ट सहेजा गया! ✓' : 'Draft Saved! ✓') : (lang === 'hi' ? 'ड्राफ्ट सहेजें' : 'Save Invoice Draft')}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                playSuccessSound(settings.soundEnabled);
+                                generateInvoicePDF({
+                                  shopName: settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store'),
+                                  shopPhone: settings.shopPhone,
+                                  shopGst: settings.shopGst,
+                                  shopLogo: settings.shopLogo,
+                                  invoiceNo: invoiceNo,
+                                  customerName: customerName,
+                                  customerPhone: customerPhone,
+                                  dateStr: new Date().toLocaleDateString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  }),
+                                  timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                                  items: basket.map(item => ({
+                                    name: item.name,
+                                    note: item.note,
+                                    amount: item.amount,
+                                  })),
+                                  subtotal: totalSum,
+                                  discountLabel: lang === 'hi' ? `छूट (${discountType === 'percent' ? `${discountValue}%` : 'नियत'})` : `Discount (${discountType === 'percent' ? `${discountValue}%` : 'Flat'})`,
+                                  discountAmount: discountAmount,
+                                  taxLabel: `${taxName} (${gstPercentage}%)`,
+                                  taxAmount: taxAmount,
+                                  grandTotal: isTaxEnabled ? grandTotal : subtotalAfterDiscount,
+                                  preferredCurrency: currency,
+                                  lang: lang,
+                                });
+                              }}
+                              className="flex-1 py-3 px-4 bg-purple-600 hover:bg-purple-500 text-dark text-xs rounded-2xl font-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-600/10 cursor-pointer text-center"
+                            >
+                              <FileDown className="w-4 h-4" />
+                              <span>{lang === 'hi' ? 'पीडीएफ डाउनलोड' : 'Download PDF'}</span>
                             </button>
                             <button
                               type="button"

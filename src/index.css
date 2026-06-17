@@ -51,51 +51,140 @@
 
 /* Print-friendly utility stylesheet */
 @media print {
-  /* Hide all background container UI elements */
-  body * {
-    visibility: hidden;
+  /* 1. Hide all standard UI background layouts of our applet completely from layout space */
+  header, footer, aside, nav, button, input:not([type="text"]):not([type="tel"]), select, textarea {
+    display: none !important;
   }
   
-  /* Reset layout of fixed modal wrappers so they do not clip or hide the print content */
-  .fixed, .backdrop-blur-sm, [class*="bg-slate-900"] {
-    position: relative !important;
+  .print\:hidden, [class*="print:hidden"], .Toastify, #sidebar-nav {
+    display: none !important;
+  }
+
+  /* 2. Strip parent/ancestor layout frameworks to behavior as simple, zero-padded transparent block wrappers */
+  html, body, #root, #root > div, .max-w-7xl, main, #applet-main-viewport, .fixed, [class*="backdrop-blur"], [class*="max-w-2xl"], .bg-white, .rounded-3xl {
     display: block !important;
-    overflow: visible !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    box-shadow: none !important;
-    border: none !important;
-    transform: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    width: auto !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
     height: auto !important;
-  }
-
-  /* Target containing cards as well */
-  .bg-white, .rounded-3xl, .shadow-2xl {
-    box-shadow: none !important;
+    min-height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
     border: none !important;
-    background: white !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    transform: none !important;
+    float: none !important;
+    flex: none !important;
+    grid: none !important;
+    visibility: visible !important;
   }
 
-  /* Make the print-area container visible and force-dock it to the absolute top-left corner */
+  /* 3. Hide other sibling items or modules in main app viewport when invoice is active */
+  #applet-main-viewport > div:not(:has(#invoice-print-area)) {
+    display: none !important;
+  }
+
+  /* 4. Let the browser page margin handle document borders nicely and avoid pagination splitting */
+  @page {
+    size: A4 portrait;
+    margin: 12mm 15mm 12mm 15mm;
+  }
+
+  /* 5. Force the active printed receipt container to render as a clean full-screen static container */
   #invoice-print-area, #invoice-print-area * {
     visibility: visible !important;
   }
   
   #invoice-print-area {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
+    display: block !important;
+    position: relative !important;
     width: 100% !important;
     max-width: 100% !important;
     background: white !important;
     color: black !important;
     box-shadow: none !important;
     border: none !important;
-    padding: 24px !important;
+    padding: 0px !important; /* let browser @page margins control the spacing */
     margin: 0px !important;
+  }
+
+  /* 6. Enforce rows and grids inside printable receipt (bypassing custom screen-width modifiers) */
+  #invoice-print-area .flex {
+    display: flex !important;
+    flex-direction: row !important;
+  }
+
+  #invoice-print-area .flex-col {
+    flex-direction: column !important;
+  }
+
+  #invoice-print-area .justify-between {
+    justify-content: space-between !important;
+  }
+
+  #invoice-print-area .items-start {
+    align-items: flex-start !important;
+  }
+
+  #invoice-print-area .grid {
+    display: grid !important;
+  }
+
+  #invoice-print-area .grid-cols-1,
+  #invoice-print-area .grid-cols-2,
+  #invoice-print-area .sm\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  #invoice-print-area .text-right {
+    text-align: right !important;
+  }
+
+  #invoice-print-area .text-left {
+    text-align: left !important;
+  }
+
+  #invoice-print-area .text-center {
+    text-align: center !important;
+  }
+
+  /* 7. Structured table alignment and formatting for standard high-contrast black printing */
+  #invoice-print-area table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  #invoice-print-area th, #invoice-print-area td {
+    padding: 6px 10px !important;
+    border-bottom: 1px solid #000 !important;
+  }
+
+  #invoice-print-area {
+    color: #000 !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+  }
+
+  #invoice-print-area h1 {
+    font-size: 18px !important;
+    font-weight: 900 !important;
+    color: #000 !important;
+  }
+
+  #invoice-print-area h2, #invoice-print-area h3 {
+    font-weight: 800 !important;
+    color: #000 !important;
+  }
+
+  /* Prevent elements from breaking across pages to ensure it stays in a single page limit */
+  #invoice-print-area tr, 
+  #invoice-print-area p, 
+  #invoice-print-area div, 
+  #invoice-print-area table {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 
   /* Stop showing dark mode styles in physical ink */

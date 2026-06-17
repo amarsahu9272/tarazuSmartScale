@@ -17,13 +17,16 @@ import {
   Printer,
   Check,
   Square,
-  CheckSquare
+  CheckSquare,
+  Pencil,
+  FileDown
 } from 'lucide-react';
 import { Language, HistoryItem, AppSettings } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
 import { parseAmountFromHistoryItem } from '../utils/historyHelper';
 import { triggerPrint } from '../utils/print';
+import { generateInvoicePDF } from '../utils/pdfGenerator';
 
 // Robust, lightweight CSV Parser with semantic type category & timestamp detection
 const handleCSVFileParse = (text: string) => {
@@ -177,6 +180,7 @@ interface HistoryModuleProps {
   onDeleteItem: (id: string) => void;
   onClearAll: () => void;
   onImportHistory?: (items: HistoryItem[], isMerge: boolean) => void;
+  onLoadInvoiceDraft?: (draft: HistoryItem) => void;
 }
 
 export default function HistoryModule({
@@ -186,10 +190,11 @@ export default function HistoryModule({
   onDeleteItem,
   onClearAll,
   onImportHistory,
+  onLoadInvoiceDraft,
 }: HistoryModuleProps) {
   const t = translate(lang);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'tarazu' | 'converter' | 'calculator' | 'business'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'tarazu' | 'converter' | 'calculator' | 'business' | 'draft_invoice'>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -205,7 +210,16 @@ export default function HistoryModule({
   // Auto-generate a billing reference whenever we open the preview
   const handleOpenSelectedInvoice = (items: HistoryItem[]) => {
     if (items.length === 0) return;
-    setInvoiceNo(`INV-${new Date().getFullYear().toString().slice(-2)}${(Date.now() % 1000000).toString().padStart(6, '0')}`);
+    if (items.length === 1 && items[0].type === 'draft_invoice') {
+      const draft = items[0];
+      setCustomerName(draft.customerName || '');
+      setCustomerPhone(draft.customerPhone || '');
+      setInvoiceNo(draft.invoiceNo || '');
+    } else {
+      setCustomerName('');
+      setCustomerPhone('');
+      setInvoiceNo(`INV-${new Date().getFullYear().toString().slice(-2)}${(Date.now() % 1000000).toString().padStart(6, '0')}`);
+    }
     setShowInvoicePreview(true);
     playClickSound(settings.soundEnabled);
   };
@@ -872,6 +886,7 @@ export default function HistoryModule({
           { id: 'converter', label: t('filterConversions') },
           { id: 'calculator', label: t('filterCalc') },
           { id: 'business', label: t('filterBiz') },
+          { id: 'draft_invoice', label: lang === 'hi' ? 'इन्वॉइस ड्राफ्ट' : 'Invoice Drafts' },
         ].map((filt) => (
           <button
             key={filt.id}
@@ -980,12 +995,16 @@ export default function HistoryModule({
                     </button>
 
                     <span className="text-xl bg-slate-50 dark:bg-slate-900 border p-2.5 rounded-xl block shadow-sm shrink-0">
-                      {item.type === 'tarazu' ? '⚖️' : item.type === 'converter' ? '🔄' : item.type === 'calculator' ? '🧮' : '📊'}
+                      {item.type === 'draft_invoice' ? '📝' : item.type === 'tarazu' ? '⚖️' : item.type === 'converter' ? '🔄' : item.type === 'calculator' ? '🧮' : '📊'}
                     </span>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[9px] font-bold font-mono text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-400 px-1.5 py-0.5 rounded uppercase">
-                          {item.type}
+                        <span className={`text-[9px] font-bold font-mono px-1.5 py-0.5 rounded uppercase ${
+                          item.type === 'draft_invoice'
+                            ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-200/50 dark:border-amber-800/30'
+                            : 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-400'
+                        }`}>
+                          {item.type === 'draft_invoice' ? (lang === 'hi' ? 'इन्वॉइस ड्राफ्ट' : 'invoice draft') : item.type}
                         </span>
                         <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono tracking-wide flex items-center gap-1">
                           <Calendar className="w-3 h-3" /> {formattedDate} {formattedTime}
@@ -998,6 +1017,19 @@ export default function HistoryModule({
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0 select-none">
+                    {item.type === 'draft_invoice' && onLoadInvoiceDraft && (
+                      <button
+                        onClick={() => {
+                          playClickSound(settings.soundEnabled);
+                          onLoadInvoiceDraft(item);
+                        }}
+                        className="p-2 text-slate-450 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 rounded-xl transition-all cursor-pointer"
+                        title={lang === 'hi' ? 'संपादित करें और पुन: लोड करें' : 'Edit & Resume Draft'}
+                      >
+                        <Pencil className="w-4 h-4 text-amber-500" />
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
                         // Open invoice just for this specific item
@@ -1070,25 +1102,45 @@ export default function HistoryModule({
             <div id="invoice-print-area" className="bg-white text-black p-4 space-y-6 font-sans">
               
               {/* Invoice Header details */}
-              <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b-2 border-black pb-5">
-                <div className="space-y-1.5 text-left select-none">
-                  {/* Shop Information */}
-                  <h1 className="text-xl font-black uppercase tracking-tight text-black">
-                    {settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store')}
-                  </h1>
-                  {settings.shopPhone && (
-                    <p className="text-xs font-semibold text-black flex items-center gap-1">
-                      <span>📱 {lang === 'hi' ? 'दूरभाष:' : 'Phone:'}</span> {settings.shopPhone}
-                    </p>
+              <div className="flex flex-col sm:flex-row justify-between items-center sm:items-start gap-4 border-b-2 border-black pb-5 w-full text-left">
+                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 select-none text-center sm:text-left">
+                  {/* Shop Brand Logo */}
+                  {settings.shopLogo && (
+                    settings.shopLogo.startsWith('data:image/') || settings.shopLogo.startsWith('http') ? (
+                      <div className="w-16 h-16 shrink-0 rounded-2xl overflow-hidden border border-black/15 bg-white p-1 flex items-center justify-center shadow-sm">
+                        <img
+                          src={settings.shopLogo}
+                          alt="Shop Logo"
+                          className="max-w-full max-h-full object-contain"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-14 h-14 shrink-0 rounded-2xl bg-slate-100 border border-black/10 text-4xl flex items-center justify-center select-none shadow-sm">
+                        {settings.shopLogo}
+                      </div>
+                    )
                   )}
-                  {settings.shopGst && (
-                    <p className="text-xs font-bold text-black flex items-center gap-1">
-                      <span>🧾 {lang === 'hi' ? 'जीएसटीआईएन (GSTIN):' : 'GSTIN:'}</span> {settings.shopGst}
-                    </p>
-                  )}
+                  
+                  <div className="space-y-1">
+                    {/* Shop Information */}
+                    <h1 className="text-xl font-black uppercase tracking-tight text-black">
+                      {settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store')}
+                    </h1>
+                    {settings.shopPhone && (
+                      <p className="text-xs font-semibold text-black flex items-center justify-center sm:justify-start gap-1">
+                        <span>📱 {lang === 'hi' ? 'दूरभाष:' : 'Phone:'}</span> {settings.shopPhone}
+                      </p>
+                    )}
+                    {settings.shopGst && (
+                      <p className="text-xs font-bold text-black flex items-center justify-center sm:justify-start gap-1">
+                        <span>🧾 {lang === 'hi' ? 'जीएसटीआईएन (GSTIN):' : 'GSTIN:'}</span> {settings.shopGst}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                <div className="text-right sm:text-right space-y-1 self-stretch sm:self-start">
+                <div className="text-center sm:text-right space-y-1 self-stretch sm:self-start">
                   <div className="text-xs font-bold text-black">
                     <span className="uppercase">{lang === 'hi' ? 'बिल संख्या:' : 'Bill No:'}</span>
                     <span className="font-mono ml-1">{invoiceNo}</span>
@@ -1156,27 +1208,91 @@ export default function HistoryModule({
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedItems.map((item, idx) => {
-                      const amount = parseAmountFromHistoryItem(item, settings.preferredCurrency);
-                      const displayAmt = amount > 0 
-                        ? `${settings.preferredCurrency} ${amount.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
-                        : '—';
+                    {(() => {
+                      const isSingleDraft = selectedItems.length === 1 && selectedItems[0].type === 'draft_invoice';
+                      if (isSingleDraft) {
+                        const draft = selectedItems[0] as any;
+                        const basket = draft.basket || [];
+                        return (
+                          <>
+                            {basket.map((item, idx) => {
+                              const displayAmt = `${settings.preferredCurrency} ${item.amount.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                              return (
+                                <tr key={item.id || idx} className="border-b border-black/10 last:border-b-0">
+                                  <td className="py-3 px-3 text-center font-mono font-bold">{idx + 1}</td>
+                                  <td className="py-3 px-3 font-sans text-left">
+                                    <div className="font-extrabold uppercase text-[11px] text-black">
+                                      {item.name}
+                                    </div>
+                                    {item.note && <div className="text-[10px] text-slate-700 leading-relaxed font-semibold">{item.note}</div>}
+                                  </td>
+                                  <td className="py-3 px-3 text-right font-mono font-extrabold text-black">
+                                    {displayAmt}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {/* Render Discount / Tax inline if they were saved in the draft */}
+                            {draft.discountValue > 0 && (
+                              <tr className="border-b border-black/15 bg-rose-50/20">
+                                <td className="py-2.5 px-3"></td>
+                                <td className="py-2.5 px-3 text-rose-700 font-bold uppercase text-[10px] font-sans">
+                                  {lang === 'hi' ? 'छूट / डिस्काउंट' : 'Discount'}{' '}
+                                  ({draft.discountType === 'percent' ? `${draft.discountValue}%` : `${settings.preferredCurrency}${draft.discountValue}`})
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-rose-700 font-mono font-extrabold">
+                                  -{settings.preferredCurrency}{(() => {
+                                    const subtotal = basket.reduce((t, i) => t + i.amount, 0);
+                                    const amtOfDisc = draft.discountType === 'percent' ? subtotal * (draft.discountValue / 100) : draft.discountValue;
+                                    return amtOfDisc.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                  })()}
+                                </td>
+                              </tr>
+                            )}
+                            {draft.isTaxEnabled && (
+                              <tr className="border-b border-black/15 bg-amber-50/20">
+                                <td className="py-2.5 px-3"></td>
+                                <td className="py-2.5 px-3 text-amber-700 font-bold uppercase text-[10px] font-sans">
+                                  {draft.taxName || 'GST'} ({draft.gstPercentage || 18}%)
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-amber-700 font-mono font-extrabold">
+                                  +{settings.preferredCurrency}{(() => {
+                                    const subtotal = basket.reduce((t, i) => t + i.amount, 0);
+                                    const disc = draft.discountType === 'percent' ? subtotal * (draft.discountValue / 100) : draft.discountValue;
+                                    const subAfterDisc = Math.max(0, subtotal - disc);
+                                    const taxAmt = (subAfterDisc * (draft.gstPercentage || 18)) / 100;
+                                    return taxAmt.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                  })()}
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        );
+                      }
 
-                      return (
-                        <tr key={item.id} className="border-b border-black/10 last:border-b-0">
-                          <td className="py-3 px-3 text-center font-mono font-bold">{idx + 1}</td>
-                          <td className="py-3 px-3 font-sans text-left">
-                            <div className="font-extrabold uppercase text-[11px] text-black">
-                              {item.type === 'tarazu' ? (lang === 'hi' ? 'तराजू मापन' : 'Weighment Scale') : item.type.toUpperCase()}
-                            </div>
-                            <div className="text-[10px] text-slate-705 leading-relaxed font-semibold">{item.label}</div>
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono font-extrabold text-black">
-                            {displayAmt}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                      // Otherwise, render normal list of general history items
+                      return selectedItems.map((item, idx) => {
+                        const amount = parseAmountFromHistoryItem(item, settings.preferredCurrency);
+                        const displayAmt = amount > 0 
+                          ? `${settings.preferredCurrency} ${amount.toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                          : '—';
+
+                        return (
+                          <tr key={item.id} className="border-b border-black/10 last:border-b-0">
+                            <td className="py-3 px-3 text-center font-mono font-bold">{idx + 1}</td>
+                            <td className="py-3 px-3 font-sans text-left">
+                              <div className="font-extrabold uppercase text-[11px] text-black">
+                                {item.type === 'draft_invoice' ? (lang === 'hi' ? 'इन्वॉइस ड्राफ्ट' : 'Invoice Draft') : item.type === 'tarazu' ? (lang === 'hi' ? 'तराजू मापन' : 'Weighment Scale') : item.type.toUpperCase()}
+                              </div>
+                              <div className="text-[10px] text-slate-705 leading-relaxed font-semibold">{item.label}</div>
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-extrabold text-black">
+                              {displayAmt}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -1250,11 +1366,11 @@ export default function HistoryModule({
 
             {/* Print Confirmation Footer - Hidden during window.print() */}
             <div className="space-y-4 print:hidden select-none border-t pt-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <button
                   type="button"
                   onClick={() => setShowInvoicePreview(false)}
-                  className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-850 font-bold text-xs rounded-xl transition-all outline-none border border-slate-200 cursor-pointer active:scale-95 text-center uppercase tracking-wider cursor-pointer"
+                   className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-850 font-bold text-xs rounded-xl transition-all outline-none border border-slate-200 cursor-pointer active:scale-95 text-center uppercase tracking-wider cursor-pointer"
                 >
                   {lang === 'hi' ? 'बंद करें' : 'Close Preview'}
                 </button>
@@ -1265,6 +1381,115 @@ export default function HistoryModule({
                   className="py-3 bg-blue-50/80 hover:bg-blue-100 dark:bg-blue-900/10 dark:hover:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition-all outline-none cursor-pointer active:scale-95 text-center uppercase tracking-wider cursor-pointer"
                 >
                   <span>{invoiceCopied ? (lang === 'hi' ? 'कॉपी हो गया! ✓' : 'Copied! ✓') : (lang === 'hi' ? 'रसीद कॉपी करें' : 'Copy Text Receipt')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    playSuccessSound(settings.soundEnabled);
+                    const isSingleDraft = selectedItems.length === 1 && selectedItems[0].type === 'draft_invoice';
+                    if (isSingleDraft) {
+                      const draft = selectedItems[0] as any;
+                      const basket = draft.basket || [];
+                      const subtotalVal = basket.reduce((t: any, i: any) => t + i.amount, 0);
+                      const discAmt = draft.discountValue > 0 ? (draft.discountType === 'percent' ? subtotalVal * (draft.discountValue / 100) : draft.discountValue) : 0;
+                      const subAfterDisc = Math.max(0, subtotalVal - discAmt);
+                      const taxAmt = draft.isTaxEnabled ? (subAfterDisc * (draft.gstPercentage || 18)) / 100 : 0;
+                      const grandTotalVal = draft.isTaxEnabled ? (subAfterDisc + taxAmt) : subAfterDisc;
+
+                      generateInvoicePDF({
+                        shopName: settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store'),
+                        shopPhone: settings.shopPhone,
+                        shopGst: settings.shopGst,
+                        shopLogo: settings.shopLogo,
+                        invoiceNo: invoiceNo,
+                        customerName: customerName,
+                        customerPhone: customerPhone,
+                        dateStr: new Date().toLocaleDateString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric'
+                        }),
+                        timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        items: basket.map((item: any) => ({
+                          name: item.name,
+                          note: item.note,
+                          amount: item.amount,
+                        })),
+                        subtotal: subtotalVal,
+                        discountLabel: lang === 'hi' ? `छूट (${draft.discountType === 'percent' ? `${draft.discountValue}%` : 'नियत'})` : `Discount (${draft.discountType === 'percent' ? `${draft.discountValue}%` : 'Flat'})`,
+                        discountAmount: discAmt,
+                        taxLabel: `${draft.taxName || 'GST'} (${draft.gstPercentage || 18}%)`,
+                        taxAmount: taxAmt,
+                        grandTotal: grandTotalVal,
+                        preferredCurrency: settings.preferredCurrency,
+                        lang: lang,
+                      });
+                    } else {
+                      const itemsList = selectedItems.map((item: any) => {
+                        const amount = parseAmountFromHistoryItem(item, settings.preferredCurrency);
+                        const typeName = item.type === 'draft_invoice' ? (lang === 'hi' ? 'इन्वॉइस ड्राफ्ट' : 'Invoice Draft') : item.type === 'tarazu' ? (lang === 'hi' ? 'तराजू मापन' : 'Weighment Scale') : item.type.toUpperCase();
+                        return {
+                          name: typeName,
+                          note: item.label,
+                          amount: amount,
+                        };
+                      });
+                      const totalAmt = selectedItems.reduce((acc, current) => acc + parseAmountFromHistoryItem(current, settings.preferredCurrency), 0);
+
+                      if (showTaxBreakdown) {
+                        const taxableVal = totalAmt / 1.18;
+                        const taxVal = totalAmt - taxableVal;
+                        generateInvoicePDF({
+                          shopName: settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store'),
+                          shopPhone: settings.shopPhone,
+                          shopGst: settings.shopGst,
+                          shopLogo: settings.shopLogo,
+                          invoiceNo: invoiceNo,
+                          customerName: customerName,
+                          customerPhone: customerPhone,
+                          dateStr: new Date().toLocaleDateString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric'
+                          }),
+                          timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                          items: itemsList,
+                          subtotal: taxableVal,
+                          taxLabel: lang === 'hi' ? 'जीएसटी (18% inclusive)' : 'GST (18% inclusive)',
+                          taxAmount: taxVal,
+                          grandTotal: totalAmt,
+                          preferredCurrency: settings.preferredCurrency,
+                          lang: lang,
+                        });
+                      } else {
+                        generateInvoicePDF({
+                          shopName: settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store'),
+                          shopPhone: settings.shopPhone,
+                          shopGst: settings.shopGst,
+                          shopLogo: settings.shopLogo,
+                          invoiceNo: invoiceNo,
+                          customerName: customerName,
+                          customerPhone: customerPhone,
+                          dateStr: new Date().toLocaleDateString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric'
+                          }),
+                          timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                          items: itemsList,
+                          subtotal: totalAmt,
+                          grandTotal: totalAmt,
+                          preferredCurrency: settings.preferredCurrency,
+                          lang: lang,
+                        });
+                      }
+                    }
+                  }}
+                  className="py-3 bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition-all outline-none cursor-pointer active:scale-95 shadow-lg shadow-purple-600/10 text-center uppercase tracking-wider cursor-pointer"
+                >
+                  <FileDown className="w-4 h-4" />
+                  <span>{lang === 'hi' ? 'पीडीएफ डाउनलोड' : 'Download PDF'}</span>
                 </button>
 
                 <button

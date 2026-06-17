@@ -4,6 +4,16 @@ import { HistoryItem } from '../types';
  * Robust helper to extract currency amounts from any history transaction record.
  */
 export const parseAmountFromHistoryItem = (item: HistoryItem, preferredCurrency: string = '₹'): number => {
+  if (item.type === 'draft_invoice') {
+    const subtotal = item.basket.reduce((tot, i) => tot + i.amount, 0);
+    const disc = item.discountType === 'percent' 
+      ? subtotal * (item.discountValue / 100) 
+      : item.discountValue;
+    const subAfterDisc = Math.max(0, subtotal - disc);
+    const tax = item.isTaxEnabled ? (subAfterDisc * item.gstPercentage) / 100 : 0;
+    return subAfterDisc + tax;
+  }
+
   if (item.type === 'tarazu') {
     if (item.mode === 'weight_to_amount' && item.resultAmount !== undefined) {
       return Number(item.resultAmount) || 0;

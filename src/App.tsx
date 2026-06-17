@@ -60,6 +60,7 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>(getStoredHistory());
   const [activeSection, setActiveSection] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeInvoiceDraft, setActiveInvoiceDraft] = useState<HistoryItem | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(() => {
     if (typeof navigator !== 'undefined') {
       return navigator.onLine;
@@ -420,6 +421,8 @@ export default function App() {
               lang={settings.language}
               settings={settings}
               onAddHistoryItem={handleAddHistoryItem}
+              activeInvoiceDraft={activeInvoiceDraft}
+              onClearInvoiceDraft={() => setActiveInvoiceDraft(null)}
             />
           )}
 
@@ -440,6 +443,10 @@ export default function App() {
               onDeleteItem={handleDeleteHistoryItem}
               onClearAll={handleClearHistory}
               onImportHistory={handleImportHistory}
+              onLoadInvoiceDraft={(draft) => {
+                setActiveInvoiceDraft(draft);
+                setActiveSection('calculator');
+              }}
             />
           )}
 

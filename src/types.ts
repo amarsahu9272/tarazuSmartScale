@@ -10,6 +10,7 @@ export interface AppSettings {
   shopGst: string;
   preferredCurrency: string;
   batterySaver?: boolean;
+  shopLogo?: string;
 }
 
 export type HistoryItem =
@@ -53,6 +54,26 @@ export type HistoryItem =
       inputs: Record<string, string | number>;
       outputs: Record<string, string | number>;
       label: string;
+    }
+  | {
+      id: string;
+      type: 'draft_invoice';
+      timestamp: number;
+      customerName: string;
+      customerPhone: string;
+      invoiceNo: string;
+      basket: Array<{
+        id: string;
+        name: string;
+        amount: number;
+        note?: string;
+      }>;
+      discountType: 'percent' | 'flat';
+      discountValue: number;
+      isTaxEnabled: boolean;
+      gstPercentage: number;
+      taxName: string;
+      label: string;
     };
 
 export type HistoryItemInput =
@@ -87,6 +108,24 @@ export type HistoryItemInput =
       tool: 'profit' | 'gst' | 'emi';
       inputs: Record<string, string | number>;
       outputs: Record<string, string | number>;
+      label: string;
+    }
+  | {
+      type: 'draft_invoice';
+      customerName: string;
+      customerPhone: string;
+      invoiceNo: string;
+      basket: Array<{
+        id: string;
+        name: string;
+        amount: number;
+        note?: string;
+      }>;
+      discountType: 'percent' | 'flat';
+      discountValue: number;
+      isTaxEnabled: boolean;
+      gstPercentage: number;
+      taxName: string;
       label: string;
     };
 
