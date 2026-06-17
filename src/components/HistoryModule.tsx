@@ -23,6 +23,7 @@ import { Language, HistoryItem, AppSettings } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
 import { parseAmountFromHistoryItem } from '../utils/historyHelper';
+import { triggerPrint } from '../utils/print';
 
 // Robust, lightweight CSV Parser with semantic type category & timestamp detection
 const handleCSVFileParse = (text: string) => {
@@ -199,6 +200,7 @@ export default function HistoryModule({
   const [customerPhone, setCustomerPhone] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('');
   const [showTaxBreakdown, setShowTaxBreakdown] = useState(false);
+  const [invoiceCopied, setInvoiceCopied] = useState(false);
 
   // Auto-generate a billing reference whenever we open the preview
   const handleOpenSelectedInvoice = (items: HistoryItem[]) => {
@@ -206,6 +208,63 @@ export default function HistoryModule({
     setInvoiceNo(`INV-${new Date().getFullYear().toString().slice(-2)}${(Date.now() % 1000000).toString().padStart(6, '0')}`);
     setShowInvoicePreview(true);
     playClickSound(settings.soundEnabled);
+  };
+
+  const handleShareHistoryInvoice = async () => {
+    if (selectedItems.length === 0) return;
+    playClickSound(settings.soundEnabled);
+
+    const totalAmt = selectedItems.reduce((acc, current) => acc + parseAmountFromHistoryItem(current, settings.preferredCurrency), 0);
+    
+    let summary = `🧾 ${settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store')}\n`;
+    if (settings.shopPhone) summary += `📱 Phone: ${settings.shopPhone}\n`;
+    if (settings.shopGst) summary += `GSTIN: ${settings.shopGst}\n`;
+    summary += `---------------------\n`;
+    summary += `${lang === 'hi' ? 'बिल संख्या:' : 'Bill No:'} ${invoiceNo}\n`;
+    summary += `${lang === 'hi' ? 'तिथि:' : 'Date:'} ${new Date().toLocaleDateString()}\n`;
+    summary += `${lang === 'hi' ? 'ग्राहक:' : 'Customer:'} ${customerName || (lang === 'hi' ? 'नकद ग्राहक' : 'Cash Customer')}\n`;
+    if (customerPhone) summary += `${lang === 'hi' ? 'मोब:' : 'Mob:'} ${customerPhone}\n`;
+    summary += `---------------------\n`;
+    summary += `${lang === 'hi' ? 'सामान विवरण:' : 'Particulars:'}\n`;
+    
+    selectedItems.forEach((item, idx) => {
+      const amount = parseAmountFromHistoryItem(item, settings.preferredCurrency);
+      const name = item.type === 'tarazu' ? (lang === 'hi' ? 'तराजू मापन' : 'Weighment Scale') : item.type.toUpperCase();
+      summary += `${idx + 1}. ${name} - ${item.label}\n   => ${settings.preferredCurrency} ${amount.toFixed(2)}\n`;
+    });
+    
+    summary += `---------------------\n`;
+    if (showTaxBreakdown) {
+      const taxableVal = totalAmt / 1.18;
+      const gstAmt = totalAmt - taxableVal;
+      summary += `${lang === 'hi' ? 'कर योग्य मूल्य:' : 'Taxable Amt:'} ${settings.preferredCurrency} ${taxableVal.toFixed(2)}\n`;
+      summary += `CGST (9%): ${settings.preferredCurrency} ${(gstAmt/2).toFixed(2)}\n`;
+      summary += `SGST (9%): ${settings.preferredCurrency} ${(gstAmt/2).toFixed(2)}\n`;
+    }
+    summary += `*${lang === 'hi' ? 'कुल राशि (GRAND TOTAL):' : 'GRAND TOTAL:'} ${settings.preferredCurrency} ${totalAmt.toFixed(2)}*\n`;
+    summary += `---------------------\n`;
+    summary += `${lang === 'hi' ? 'तराजू एप्प डिजिटल रसीद' : 'Tarazu App Digital Receipt'}`;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: lang === 'hi' ? 'तराजू डिजिटल रसीद' : 'Tarazu Bill Receipt',
+          text: summary,
+        });
+      } else {
+        await navigator.clipboard.writeText(summary);
+        setInvoiceCopied(true);
+        setTimeout(() => setInvoiceCopied(false), 2000);
+      }
+    } catch (err) {
+      try {
+        await navigator.clipboard.writeText(summary);
+        setInvoiceCopied(true);
+        setTimeout(() => setInvoiceCopied(false), 2000);
+      } catch (clipErr) {
+        console.error('Clipboard copy failed:', clipErr);
+      }
+    }
   };
 
   const selectedItems = history.filter(item => selectedItemIds.includes(item.id));
@@ -1190,26 +1249,45 @@ export default function HistoryModule({
             </div>
 
             {/* Print Confirmation Footer - Hidden during window.print() */}
-            <div className="grid grid-cols-2 gap-3 pt-4 border-t print:hidden select-none">
-              <button
-                type="button"
-                onClick={() => {
-                  playClickSound(settings.soundEnabled);
-                  window.print();
-                }}
-                className="py-3 bg-black hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition-all outline-none cursor-pointer active:scale-95 shadow-lg shadow-black/10 text-center uppercase tracking-wider cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>{lang === 'hi' ? 'प्रिंट करें' : 'Print Now'}</span>
-              </button>
+            <div className="space-y-4 print:hidden select-none border-t pt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowInvoicePreview(false)}
+                  className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-850 font-bold text-xs rounded-xl transition-all outline-none border border-slate-200 cursor-pointer active:scale-95 text-center uppercase tracking-wider cursor-pointer"
+                >
+                  {lang === 'hi' ? 'बंद करें' : 'Close Preview'}
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setShowInvoicePreview(false)}
-                className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-850 font-bold text-xs rounded-xl transition-all outline-none border border-slate-200 cursor-pointer active:scale-95 text-center uppercase tracking-wider cursor-pointer"
-              >
-                {lang === 'hi' ? 'बंद करें' : 'Close Preview'}
-              </button>
+                <button
+                  type="button"
+                  onClick={handleShareHistoryInvoice}
+                  className="py-3 bg-blue-50/80 hover:bg-blue-100 dark:bg-blue-900/10 dark:hover:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition-all outline-none cursor-pointer active:scale-95 text-center uppercase tracking-wider cursor-pointer"
+                >
+                  <span>{invoiceCopied ? (lang === 'hi' ? 'कॉपी हो गया! ✓' : 'Copied! ✓') : (lang === 'hi' ? 'रसीद कॉपी करें' : 'Copy Text Receipt')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    playClickSound(settings.soundEnabled);
+                    const success = triggerPrint();
+                    if (!success) {
+                      handleShareHistoryInvoice();
+                    }
+                  }}
+                  className="py-3 bg-black hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition-all outline-none cursor-pointer active:scale-95 shadow-lg shadow-black/10 text-center uppercase tracking-wider cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>{lang === 'hi' ? 'प्रिंट करें' : 'Print Now'}</span>
+                </button>
+              </div>
+
+              <p className="text-[10px] text-center text-slate-400 font-bold leading-normal">
+                {lang === 'hi' 
+                  ? '💡 सुझाव: यदि आईफ्रेम सैंडबॉक्स के कारण प्रिंटर संवाद न खुले, तो "रसीद कॉपी करें" का उपयोग करें या सबसे ऊपर "Open in New Tab" पर क्लिक करें।' 
+                  : '💡 Pro-Tip: If printing doesn\'t open in the editor preview iframe, click "Open in New Tab" (top-right of screen) or use the "Copy Text Receipt" fallback.'}
+              </p>
             </div>
 
           </div>

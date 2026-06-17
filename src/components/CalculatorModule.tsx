@@ -5,6 +5,7 @@ import { Delete, Trash2, Copy, CheckCircle, Scale, Volume2, ShoppingCart, ListPl
 import { Language, HistoryItem, AppSettings, HistoryItemInput } from '../types';
 import { translate } from '../i18n';
 import { playClickSound, playSuccessSound } from '../utils/audio';
+import { triggerPrint } from '../utils/print';
 
 interface CalculatorModuleProps {
   lang: Language;
@@ -443,6 +444,10 @@ export default function CalculatorModule({
   }, [settings.preferredCurrency]);
   const [showCurrencyMenu, setShowCurrencyMenu] = useState(false);
   const [longPressTimeout, setLongPressTimeout] = useState<any>(null);
+  const [showPrintPreview, setShowPrintPreview] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [invoiceNo] = useState(() => `TRZ-${Math.floor(100000 + Math.random() * 900000)}`);
 
   const startLongPress = (e: React.MouseEvent | React.TouchEvent) => {
     if ('button' in e && e.button !== 0) return;
@@ -690,7 +695,7 @@ export default function CalculatorModule({
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (basket.length > 0) {
-          window.print();
+          setShowPrintPreview(true);
         }
         return;
       }
@@ -1951,7 +1956,7 @@ export default function CalculatorModule({
                 </div>
               )}
 
-              <div className="flex-col items-center justify-between text-slate-800 dark:text-slate-300">
+              <div className="flex items-center justify-between text-slate-800 dark:text-slate-300 border-b border-slate-150 dark:border-slate-800/50 pb-2.5">
                 <span className="text-xs font-black">
                   {isTaxEnabled 
                     ? (lang === 'hi' ? 'कुल देय राशि' : 'NET PAYABLE TOTAL') 
@@ -1979,7 +1984,7 @@ export default function CalculatorModule({
                     disabled={basket.length === 0}
                     onClick={() => {
                       playClickSound(settings.soundEnabled);
-                      window.print();
+                      setShowPrintPreview(true);
                     }}
                     className={`px-2 py-1 text-[10px] font-black rounded-lg transition-all border cursor-pointer active:scale-95 flex items-center gap-1 ${
                       basket.length === 0
@@ -2017,7 +2022,229 @@ export default function CalculatorModule({
                     <span>{basket.length}</span>
                   </span>
 
-                  <div className="relative inline-block shrink-0">
+                  
+
+                  {/* Print Preview/Invoice Dialog Box */}
+                  {showPrintPreview && basket.length > 0 && (
+                    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 overflow-y-auto flex items-center justify-center p-4">
+                      <div className="bg-white text-slate-900 w-full max-w-2xl rounded-3xl shadow-2xl p-6 md:p-8 space-y-6 relative border border-slate-100 animate-in fade-in zoom-in duration-200">
+                        
+                        {/* Modal Heading - Hidden during physical window.print() */}
+                        <div className="flex items-center justify-between border-b pb-4 print:hidden">
+                          <div className="flex items-center gap-2 text-slate-850">
+                            <Printer className="w-5 h-5 text-emerald-600" />
+                            <h3 className="font-black text-sm uppercase tracking-wide">
+                              {lang === 'hi' ? 'बिल प्रिंट पूर्वदर्शन' : 'Invoice Print Preview'}
+                            </h3>
+                          </div>
+                          
+                          <button
+                            onClick={() => setShowPrintPreview(false)}
+                            className="p-1.5 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                          >
+                            <X className="w-5 h-5 text-slate-400" />
+                          </button>
+                        </div>
+
+                        {/* PRINT-ONLY/PREVIEW AREA WITH PROVEN ID */}
+                        <div id="invoice-print-area" className="bg-white text-black p-4 space-y-6 font-sans">
+                          
+                          {/* Invoice Header details */}
+                          <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b-2 border-black pb-5 text-left">
+                            <div className="space-y-1.5 select-none text-left">
+                              {/* Shop Information */}
+                              <h1 className="text-xl font-black uppercase tracking-tight text-black">
+                                {settings.shopName || (lang === 'hi' ? 'स्मार्ट तराजू की दुकान' : 'Smart Weigh Store')}
+                              </h1>
+                              {settings.shopPhone && (
+                                <p className="text-xs font-semibold text-black flex items-center gap-1">
+                                  <span>📱 {lang === 'hi' ? 'दूरभाष:' : 'Phone:'}</span> {settings.shopPhone}
+                                </p>
+                              )}
+                              {settings.shopGst && (
+                                <p className="text-xs font-bold text-black flex items-center gap-1 text-left">
+                                  <span>🧾 {lang === 'hi' ? 'जीएसटीआईएन (GSTIN):' : 'GSTIN:'}</span> {settings.shopGst}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="text-left sm:text-right space-y-1 self-stretch sm:self-auto">
+                              <div className="text-xs font-bold text-black">
+                                <span className="uppercase">{lang === 'hi' ? 'बिल संख्या:' : 'Bill No:'}</span>
+                                <span className="font-mono ml-1">{invoiceNo}</span>
+                              </div>
+                              <div className="text-xs text-black">
+                                <span className="font-bold">{lang === 'hi' ? 'तिथि:' : 'Date:'}</span>
+                                <span className="ml-1 font-mono">{new Date().toLocaleDateString(lang === 'hi' ? 'hi-IN' : 'en-US', {
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric'
+                                })}</span>
+                              </div>
+                              <div className="text-xs text-black font-semibold">
+                                <span>{lang === 'hi' ? 'समय:' : 'Time:'}</span>
+                                <span className="ml-1 font-mono">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Editable Billing Inputs - Hides values/borders during window.print() */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border print:border-none print:p-0 print:bg-transparent">
+                            <div className="text-left">
+                              <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 print:hidden select-none">
+                                {lang === 'hi' ? 'ग्राहक का नाम' : 'Customer Name'}
+                              </label>
+                              <input
+                                type="text"
+                                placeholder={lang === 'hi' ? 'उदा. राजेश कुमार' : 'e.g. Rajesh Kumar'}
+                                value={customerName}
+                                onChange={(e) => setCustomerName(e.target.value)}
+                                className="w-full text-xs font-extrabold capitalize text-black bg-transparent border-b border-transparent focus:border-emerald-600 outline-none pb-0.5 print:hidden mt-1"
+                              />
+                              <div className="hidden print:block text-xs text-black font-semibold">
+                                <span className="text-[11px] font-black">{lang === 'hi' ? 'ग्राहक:' : 'Customer:'}</span> {customerName || (lang === 'hi' ? 'नकद ग्राहक' : 'Cash Customer')}
+                              </div>
+                            </div>
+
+                            <div className="text-left">
+                              <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 print:hidden select-none">
+                                {lang === 'hi' ? 'मोबाइल नंबर (वैकल्पिक)' : 'Mobile Number (Optional)'}
+                              </label>
+                              <input
+                                type="tel"
+                                placeholder={lang === 'hi' ? 'उदा. +91 98765 43210' : 'e.g. +91 98765 43210'}
+                                value={customerPhone}
+                                onChange={(e) => setCustomerPhone(e.target.value)}
+                                className="w-full text-xs font-mono font-bold text-black bg-transparent border-b border-transparent focus:border-emerald-600 outline-none pb-0.5 print:hidden mt-1"
+                              />
+                              {customerPhone && (
+                                <div className="hidden print:block text-xs text-black font-semibold mt-1">
+                                  <span className="text-[11px] font-black">{lang === 'hi' ? 'मोब:' : 'Mob:'}</span> {customerPhone}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Itemized Calculations table structured cleanly for thermal/A4 printing */}
+                          <div className="border border-black overflow-hidden rounded-lg">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-black text-white uppercase text-[10px] tracking-wider border-b border-black">
+                                  <th className="py-2.5 px-3 text-center w-12 font-black">#</th>
+                                  <th className="py-2.5 px-3 font-black">{lang === 'hi' ? 'विवरण' : 'Particulars'}</th>
+                                  <th className="py-2.5 px-3 text-right w-28 font-black">{lang === 'hi' ? 'विवरण मूल्य' : 'Amount'}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {basket.map((item, idx) => (
+                                  <tr key={item.id} className="border-b border-black">
+                                    <td className="py-2.5 px-3 text-center font-mono font-bold text-[11px] text-black">
+                                      {idx + 1}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-left">
+                                      <p className="font-extrabold text-black text-sm">{item.name}</p>
+                                      {item.note && (
+                                        <p className="text-[10px] font-bold text-gray-700 italic mt-0.5">
+                                          {lang === 'hi' ? 'नोट: ' : 'Note: '}{item.note}
+                                        </p>
+                                      )}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right font-mono font-black text-[13px] text-black">
+                                      {currency}{item.amount.toFixed(settings.decimalPrecision)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Invoice Totals Breakdown */}
+                          <div className="flex flex-col items-end space-y-1.5 pt-2">
+                            <div className="w-full sm:w-80 space-y-1.5 text-xs text-black">
+                              <div className="flex justify-between font-semibold">
+                                <span>{lang === 'hi' ? 'उपकुल योग (सामान):' : 'Subtotal (Items):'}</span>
+                                <span className="font-mono">{currency}{totalSum.toFixed(settings.decimalPrecision)}</span>
+                              </div>
+
+                              {discountValue > 0 && (
+                                <div className="flex justify-between font-bold text-green-700">
+                                  <span>{lang === 'hi' ? `छूट (${discountType === 'percent' ? `${discountValue}%` : 'नियत'}):` : `Discount (${discountType === 'percent' ? `${discountValue}%` : 'Flat'}):`}</span>
+                                  <span className="font-mono">-{currency}{discountAmount.toFixed(settings.decimalPrecision)}</span>
+                                </div>
+                              )}
+
+                              {isTaxEnabled && (
+                                <div className="flex justify-between font-semibold">
+                                  <span>{taxName} ({gstPercentage}%):</span>
+                                  <span className="font-mono">+{currency}{taxAmount.toFixed(settings.decimalPrecision)}</span>
+                                </div>
+                              )}
+
+                              <div className="flex justify-between border-t-2 border-black pt-2 text-sm font-black text-black">
+                                <span>{lang === 'hi' ? 'कुल देय राशि:' : 'GRAND TOTAL:'}</span>
+                                <span className="font-mono text-base">{currency}{(isTaxEnabled ? grandTotal : subtotalAfterDiscount).toFixed(settings.decimalPrecision)}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Print Footer message */}
+                          <div className="text-center pt-6 border-t-2 border-dashed border-gray-300 select-none">
+                            <p className="text-xs font-bold text-black">
+                              {lang === 'hi' ? 'खरीदारी और गणना के लिए धन्यवाद!' : 'Thank you for your business!'}
+                            </p>
+                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider font-mono">
+                              {lang === 'hi' ? 'तराज़ू स्मार्ट ऐप द्वारा संचालित' : 'Powered by Tarazu Smart app'}
+                            </p>
+                          </div>
+
+                        </div>
+
+                        {/* Print Trigger, Copy Fallback & Cancel Action Buttons */}
+                        <div className="space-y-4 print:hidden select-none">
+                          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowPrintPreview(false)}
+                              className="flex-1 py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-705 text-xs rounded-2xl font-black transition-all cursor-pointer text-center"
+                            >
+                              {lang === 'hi' ? 'बंद करें' : 'Cancel & Close'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleShareReceipt}
+                              className="flex-1 py-3 px-4 bg-blue-50/80 hover:bg-blue-100 dark:bg-blue-900/10 dark:hover:bg-blue-900/20 text-blue-700 dark:text-blue-400 text-xs rounded-2xl font-black flex items-center justify-center gap-2 transition-all cursor-pointer text-center"
+                            >
+                              <span>{receiptCopied ? (lang === 'hi' ? 'कॉपी हो गया! ✓' : 'Copied! ✓') : (lang === 'hi' ? 'रसीद कॉपी करें' : 'Copy Text Receipt')}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                playSuccessSound(settings.soundEnabled);
+                                const success = triggerPrint();
+                                if (!success) {
+                                  // Fallback copy immediately if standard printer process fails or is blocked
+                                  handleShareReceipt();
+                                }
+                              }}
+                              className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-2xl font-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-600/10 cursor-pointer text-center"
+                            >
+                              <Printer className="w-4 h-4" />
+                              <span>{lang === 'hi' ? 'रसीद अभी प्रिंट करें' : 'Print Invoice Now'}</span>
+                            </button>
+                          </div>
+                          
+                          <p className="text-[10px] text-center text-slate-400 font-bold leading-normal">
+                            {lang === 'hi' 
+                              ? '💡 सुझाव: यदि आईफ्रेम सैंडबॉक्स के कारण प्रिंटर संवाद न खुले, तो "रसीद कॉपी करें" का उपयोग करें या सबसे ऊपर "Open in New Tab" पर क्लिक करें।' 
+                              : '💡 Pro-Tip: If printing doesn\'t open in the editor preview iframe, click "Open in New Tab" (top-right of screen) or use the "Copy Text Receipt" fallback.'}
+                          </p>
+                        </div>
+
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="relative inline-block shrink-0">
                     <motion.span
                       id="basket-total-display"
                       key={`${isTaxEnabled}-${discountValue}-${grandTotal}-${currency}-${isFractionFormat}`}
@@ -2098,89 +2325,6 @@ export default function CalculatorModule({
                       </>
                     )}
                   </div>
-
-                  {/* Print media query styling stylesheet block */}
-                  <style dangerouslySetInnerHTML={{__html: `
-                    @media print {
-                      body * {
-                        visibility: hidden !important;
-                      }
-                      #print-receipt-container, #print-receipt-container * {
-                        visibility: visible !important;
-                      }
-                      #print-receipt-container {
-                        position: absolute !important;
-                        left: 0 !important;
-                        top: 0 !important;
-                        width: 100% !important;
-                        display: block !important;
-                        background: white !important;
-                        color: black !important;
-                      }
-                    }
-                  `}} />
-
-                  {/* Print Receipt Render */}
-                  <div id="print-receipt-container" className="hidden print:block font-mono text-black text-sm p-6 bg-white w-full max-w-sm mx-auto">
-                    <div className="text-center border-b-2 border-dashed border-gray-400 pb-4 mb-4">
-                      <h1 className="text-lg font-black uppercase tracking-wider">{lang === 'hi' ? 'तराज़ू स्मार्ट' : 'TARAZU SMART'}</h1>
-                      <p className="text-xs text-gray-500 font-bold">{lang === 'hi' ? 'डिजिटल बहीखाता रसीद' : 'DIGITAL TRANSACTION RECEIPT'}</p>
-                      <p className="text-[10px] text-gray-400 mt-1">{new Date().toLocaleString()}</p>
-                    </div>
-
-                    <div className="space-y-2 mb-4">
-                      <div className="grid grid-cols-12 gap-1 text-[11px] font-bold text-gray-500 border-b border-gray-200 pb-1 uppercase tracking-wide">
-                        <span className="col-span-1">#</span>
-                        <span className="col-span-7">{lang === 'hi' ? 'विवरण' : 'ITEM'}</span>
-                        <span className="col-span-4 text-right">{lang === 'hi' ? 'मूल्य' : 'PRICE'}</span>
-                      </div>
-                      {basket.map((item, index) => (
-                        <div key={item.id} className="grid grid-cols-12 gap-1 text-xs border-b border-gray-100/40 pb-1">
-                          <span className="col-span-1 text-gray-400">{index + 1}</span>
-                          <span className="col-span-11 flex flex-col">
-                            <div className="flex justify-between w-full">
-                              <span className="font-extrabold truncate pr-2">{item.name}</span>
-                              <span className="font-bold text-right">{currency}{item.amount.toFixed(settings.decimalPrecision)}</span>
-                            </div>
-                            {item.note && (
-                              <span className="text-[10px] text-gray-500 italic mt-0.5 block">
-                                {lang === 'hi' ? 'नोट: ' : 'Note: '}{item.note}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="border-t-2 border-dashed border-gray-400 pt-3 space-y-1.5 text-xs">
-                      <div className="flex justify-between">
-                        <span>{lang === 'hi' ? 'उपकुल योग (सामान):' : 'Subtotal (Items):'}</span>
-                        <span className="font-bold">{currency}{totalSum.toFixed(settings.decimalPrecision)}</span>
-                      </div>
-                      {discountValue > 0 && (
-                        <div className="flex justify-between text-gray-700">
-                          <span>{lang === 'hi' ? `छूट (${discountType === 'percent' ? `${discountValue}%` : currency}):` : `Discount (${discountType === 'percent' ? `${discountValue}%` : 'Flat'}):`}</span>
-                          <span className="font-bold text-red-650">-{currency}{discountAmount.toFixed(settings.decimalPrecision)}</span>
-                        </div>
-                      )}
-                      {isTaxEnabled && (
-                        <div className="flex justify-between text-gray-600">
-                          <span>{taxName} ({gstPercentage}%):</span>
-                          <span className="font-bold">+{currency}{taxAmount.toFixed(settings.decimalPrecision)}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between border-t border-gray-300 pt-2 font-black text-sm">
-                        <span>{lang === 'hi' ? 'कुल देय राशि:' : 'Grand Total:'}</span>
-                        <span>{currency}{(isTaxEnabled ? grandTotal : subtotalAfterDiscount).toFixed(settings.decimalPrecision)}</span>
-                      </div>
-                    </div>
-
-                    <div className="text-center border-t-2 border-dashed border-gray-400 mt-6 pt-4 text-[10px] text-gray-400 leading-normal">
-                      <p className="font-black text-[11px] text-gray-700">{lang === 'hi' ? 'खरीदारी और गणना के लिए धन्यवाद!' : 'Thank you for your calculation!'}</p>
-                      <p className="mt-1">Tarazu Smart Applet • Seamless Ledger & Billing calculator</p>
-                    </div>
-                  </div>
-                </div>
               </div>
 
               {/* Action buttons */}
